@@ -553,9 +553,11 @@ def draw_splash():
         "  ██████╔╝██║  ██║╚██████╔╝╚██████╗███████╗",
         "  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝╚══════╝",
         "",
-        "        BRUCE'S TREASURE",
+        "                   v1.0",
         "",
-        "      > PRESS ANY KEY TO BEGIN <",
+        "             BRUCE'S TREASURE",
+        "",
+        "         > PRESS ANY KEY TO BEGIN <",
     ]
     y_offset = 160
     for line in ascii_title:
