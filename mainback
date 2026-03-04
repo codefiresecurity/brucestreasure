@@ -1,0 +1,417 @@
+import pygame
+import random
+import math
+import os
+import sys
+from collections import deque
+
+# ==========================================================
+# CONFIG
+# ==========================================================
+
+SCREEN_WIDTH = 1280
+SCREEN_HEIGHT = 720
+TILE_SIZE = 32
+
+VISIBLE_COLS = SCREEN_WIDTH // TILE_SIZE
+VISIBLE_ROWS = SCREEN_HEIGHT // TILE_SIZE
+
+WORLD_COLS = 120
+WORLD_ROWS = 120
+
+FPS = 60
+
+FLOOR = 0
+WALL = 1
+SPIKE = 2
+GOAL = 9
+
+ASSET_PATH = "assets"
+DEBUG = False
+
+# ==========================================================
+# INIT
+# ==========================================================
+
+pygame.init()
+pygame.mixer.init()
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption("Sun Spike Adventure")
+clock = pygame.time.Clock()
+font = pygame.font.SysFont("consolas", 24)
+
+# ==========================================================
+# AUDIO
+# ==========================================================
+
+def load_sound(name):
+    path = os.path.join(ASSET_PATH, name)
+    if os.path.exists(path):
+        return pygame.mixer.Sound(path)
+    return None
+
+if os.path.exists(os.path.join(ASSET_PATH, "music.mp3")):
+    pygame.mixer.music.load(os.path.join(ASSET_PATH, "music.mp3"))
+    pygame.mixer.music.set_volume(0.5)
+    pygame.mixer.music.play(-1)
+
+SND_SPIKE = load_sound("hit.wav")
+SND_PICKUP = load_sound("coin.wav")
+
+# ==========================================================
+# SPRITES
+# ==========================================================
+
+def load_sprite(name):
+    path = os.path.join(ASSET_PATH, name)
+    if os.path.exists(path):
+        img = pygame.image.load(path).convert_alpha()
+        return pygame.transform.scale(img, (TILE_SIZE, TILE_SIZE))
+    return None
+
+SPRITES = {
+    FLOOR: load_sprite("floor.png"),
+    WALL: load_sprite("wall.png"),
+    SPIKE: load_sprite("spike.png"),
+    GOAL: load_sprite("sun.png")
+}
+
+PLAYER_SPRITE = load_sprite("player.png")
+
+# ==========================================================
+# ITEM SYSTEM
+# ==========================================================
+
+ITEM_TYPES = {
+    3: {"name":"Coin","points":10,"spawn":0.02,"sprite":"coin.png"},
+    4: {"name":"Mushroom","points":25,"spawn":0.01,"sprite":"mushroom.png"},
+    6: {"name":"Trophy","points":100,"spawn":0.005,"sprite":"trophy.png"},
+    7: {"name":"Poison","points":-100,"spawn":0.01,"sprite":"poison.png"},
+}
+
+for tile,data in ITEM_TYPES.items():
+    data["image"] = load_sprite(data["sprite"])
+
+# ==========================================================
+# DUNGEON GENERATOR (ROOMS + CORRIDORS)
+# ==========================================================
+
+def generate_world():
+    grid = [[WALL for _ in range(WORLD_COLS)] for _ in range(WORLD_ROWS)]
+
+    rooms = []
+
+    for _ in range(15):
+        w = random.randint(6,12)
+        h = random.randint(6,12)
+        x = random.randint(2,WORLD_COLS-w-2)
+        y = random.randint(2,WORLD_ROWS-h-2)
+
+        new_room = pygame.Rect(x,y,w,h)
+        failed = False
+        for other in rooms:
+            if new_room.colliderect(other):
+                failed = True
+                break
+
+        if not failed:
+            for i in range(x,x+w):
+                for j in range(y,y+h):
+                    grid[j][i] = FLOOR
+            rooms.append(new_room)
+
+    # connect rooms
+    for i in range(1,len(rooms)):
+        x1,y1 = rooms[i-1].center
+        x2,y2 = rooms[i].center
+
+        if random.random() < 0.5:
+            carve_h(grid,x1,x2,y1)
+            carve_v(grid,y1,y2,x2)
+        else:
+            carve_v(grid,y1,y2,x1)
+            carve_h(grid,x1,x2,y2)
+
+    # spikes on wall edges only (SAFE)
+    for y in range(1, WORLD_ROWS-1):
+        for x in range(1, WORLD_COLS-1):
+            if grid[y][x] == WALL:
+                for nx, ny in neighbors(x, y):
+                    if grid[ny][nx] == FLOOR:
+                        if random.random() < 0.08:
+                            grid[y][x] = SPIKE
+                        break
+
+    # items
+    for y in range(WORLD_ROWS):
+        for x in range(WORLD_COLS):
+            if grid[y][x] == FLOOR:
+                for tile,data in ITEM_TYPES.items():
+                    if random.random() < data["spawn"]:
+                        grid[y][x] = tile
+                        break
+
+    # goal in last room
+    gx,gy = rooms[-1].center
+    grid[int(gy)][int(gx)] = GOAL
+
+    return grid, rooms[0].center
+
+def carve_h(grid,x1,x2,y):
+    for x in range(min(x1,x2),max(x1,x2)+1):
+        grid[int(y)][int(x)] = FLOOR
+
+def carve_v(grid,y1,y2,x):
+    for y in range(min(y1,y2),max(y1,y2)+1):
+        grid[int(y)][int(x)] = FLOOR
+
+def neighbors(x, y):
+    results = []
+    for dx, dy in [(1,0), (-1,0), (0,1), (0,-1)]:
+        nx = x + dx
+        ny = y + dy
+        if 0 <= nx < WORLD_COLS and 0 <= ny < WORLD_ROWS:
+            results.append((nx, ny))
+    return results
+
+# ==========================================================
+# PLAYER
+# ==========================================================
+
+class Player:
+    def __init__(self,start):
+        self.x,self.y = int(start[0]),int(start[1])
+        self.score = 0
+        self.dead = False
+
+        self.move_delay = 140  # milliseconds between moves
+        self.last_move_time = 0
+
+    def move(self,dx,dy,grid):
+        now = pygame.time.get_ticks()
+
+        if now - self.last_move_time < self.move_delay:
+            return
+
+        if dx == 0 and dy == 0:
+            return
+
+        self.last_move_time = now
+
+        nx = max(0,min(WORLD_COLS-1,self.x+dx))
+        ny = max(0,min(WORLD_ROWS-1,self.y+dy))
+
+        tile = grid[ny][nx]
+
+        if tile == SPIKE:
+            self.dead = True
+            if SND_SPIKE: SND_SPIKE.play()
+            return
+
+        if tile == WALL:
+            return
+
+        if tile in ITEM_TYPES:
+            self.score += ITEM_TYPES[tile]["points"]
+            if SND_PICKUP: SND_PICKUP.play()
+            grid[ny][nx] = FLOOR
+
+        if tile == GOAL:
+            return "NEXT"
+
+        self.x,self.y = nx,ny
+# ==========================================================
+# CAMERA
+# ==========================================================
+
+camera_x = 0
+camera_y = 0
+
+def get_camera(player):
+    global camera_x, camera_y
+
+    target_x = player.x*TILE_SIZE - SCREEN_WIDTH//2
+    target_y = player.y*TILE_SIZE - SCREEN_HEIGHT//2
+
+    # Smooth follow (lerp)
+    camera_x += (target_x - camera_x) * 0.12
+    camera_y += (target_y - camera_y) * 0.12
+
+    return int(camera_x), int(camera_y)
+
+# ==========================================================
+# HIGH SCORES
+# ==========================================================
+
+def load_scores():
+    if not os.path.exists("highscores.txt"):
+        return []
+    with open("highscores.txt") as f:
+        return [int(x.strip()) for x in f]
+
+def save_score(score):
+    scores = load_scores()
+    scores.append(score)
+    scores = sorted(scores,reverse=True)[:5]
+    with open("highscores.txt","w") as f:
+        for s in scores:
+            f.write(str(s)+"\n")
+
+# ==========================================================
+# TORCH
+# ==========================================================
+
+def draw_torch(player):
+    darkness = pygame.Surface((SCREEN_WIDTH,SCREEN_HEIGHT),pygame.SRCALPHA)
+    darkness.fill((0,0,0,220))
+    pygame.draw.circle(darkness,(0,0,0,0),
+                       (SCREEN_WIDTH//2,SCREEN_HEIGHT//2),200)
+    screen.blit(darkness,(0,0))
+
+# ==========================================================
+# MINIMAP
+# ==========================================================
+
+def draw_minimap(grid,player):
+    mini = pygame.Surface((200,200))
+    mini.fill((20,20,20))
+    scale = 200/WORLD_COLS
+
+    for y in range(WORLD_ROWS):
+        for x in range(WORLD_COLS):
+            if grid[y][x] == FLOOR:
+                pygame.draw.rect(mini,(90,90,90),
+                                 (x*scale,y*scale,2,2))
+
+    pygame.draw.rect(mini,(255,0,0),
+                     (player.x*scale,player.y*scale,4,4))
+
+    screen.blit(mini,(SCREEN_WIDTH-210,10))
+
+# ==========================================================
+# GAME STATES
+# ==========================================================
+
+STATE_SPLASH = 0
+STATE_PLAY = 1
+STATE_GAMEOVER = 2
+
+state = STATE_SPLASH
+
+grid = None
+player = None
+
+# ==========================================================
+# MAIN LOOP
+# ==========================================================
+
+while True:
+    clock.tick(FPS)
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            pygame.quit(); sys.exit()
+
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                pygame.quit(); sys.exit()
+
+            if state == STATE_SPLASH:
+                grid,start = generate_world()
+                player = Player(start)
+                state = STATE_PLAY
+
+    if state == STATE_SPLASH:
+        screen.fill((0,0,0))
+
+        ascii_title = [
+            "  ██████╗ ██████╗ ██╗   ██╗ ██████╗███████╗",
+            "  ██╔══██╗██╔══██╗██║   ██║██╔════╝██╔════╝",
+            "  ██████╔╝██████╔╝██║   ██║██║     █████╗  ",
+            "  ██╔══██╗██╔══██╗██║   ██║██║     ██╔══╝  ",
+            "  ██████╔╝██║  ██║╚██████╔╝╚██████╗███████╗",
+            "  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝╚══════╝",
+            "",
+            "        BRUCE'S TREASURE",
+            "",
+            "      > PRESS ANY KEY TO BEGIN <",
+        ]
+
+        y_offset = 180
+        for line in ascii_title:
+            text = font.render(line, True, (0,255,0))
+            rect = text.get_rect(center=(SCREEN_WIDTH//2, y_offset))
+            screen.blit(text, rect)
+            y_offset += 35
+
+        pygame.display.flip()
+        continue
+
+    if state == STATE_PLAY:
+
+        keys = pygame.key.get_pressed()
+        dx=dy=0
+        if keys[pygame.K_LEFT] or keys[pygame.K_a]: dx=-1
+        if keys[pygame.K_RIGHT] or keys[pygame.K_d]: dx=1
+        if keys[pygame.K_UP] or keys[pygame.K_w]: dy=-1
+        if keys[pygame.K_DOWN] or keys[pygame.K_s]: dy=1
+
+        result = player.move(dx,dy,grid)
+
+        if player.dead:
+            save_score(player.score)
+            state = STATE_GAMEOVER
+
+        cam_x,cam_y = get_camera(player)
+
+        screen.fill((0,0,0))
+
+        for y in range(WORLD_ROWS):
+            for x in range(WORLD_COLS):
+                rect = pygame.Rect(x*TILE_SIZE-cam_x,
+                                   y*TILE_SIZE-cam_y,
+                                   TILE_SIZE,TILE_SIZE)
+                if rect.colliderect(screen.get_rect()):
+                    tile = grid[y][x]
+
+                    if tile in SPRITES and SPRITES[tile]:
+                        screen.blit(SPRITES[tile],rect)
+                    elif tile in ITEM_TYPES and ITEM_TYPES[tile]["image"]:
+                        screen.blit(ITEM_TYPES[tile]["image"],rect)
+                    else:
+                        color=(60,60,60)
+                        if tile==FLOOR: color=(110,110,110)
+                        if tile==SPIKE: color=(200,200,200)
+                        pygame.draw.rect(screen,color,rect)
+
+        px = player.x*TILE_SIZE - cam_x
+        py = player.y*TILE_SIZE - cam_y
+
+        if PLAYER_SPRITE:
+            screen.blit(PLAYER_SPRITE,(px,py))
+        else:
+            pygame.draw.rect(screen,(0,0,255),(px,py,TILE_SIZE,TILE_SIZE))
+
+        draw_torch(player)
+        draw_minimap(grid,player)
+
+        score_text = font.render(f"Score: {player.score}",True,(255,255,255))
+        screen.blit(score_text,(10,10))
+
+        pygame.display.flip()
+
+    if state == STATE_GAMEOVER:
+        screen.fill((0,0,0))
+        over = font.render("GAME OVER",True,(255,0,0))
+        screen.blit(over,(SCREEN_WIDTH//2-100,200))
+
+        scores = load_scores()
+        y=260
+        for s in scores:
+            screen.blit(font.render(str(s),True,(255,255,255)),
+                        (SCREEN_WIDTH//2-20,y))
+            y+=30
+
+        pygame.display.flip()
+        pygame.time.wait(3000)
+        state = STATE_SPLASH
