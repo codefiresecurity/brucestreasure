@@ -9,8 +9,8 @@ from collections import deque
 # CONFIG
 # ==========================================================
 
-SCREEN_WIDTH = 1280
-SCREEN_HEIGHT = 720
+SCREEN_WIDTH = 1870
+SCREEN_HEIGHT = 920
 TILE_SIZE = 32
 
 VISIBLE_COLS = SCREEN_WIDTH // TILE_SIZE
@@ -462,7 +462,7 @@ def draw_minimap(grid,player):
     screen.blit(mini,(SCREEN_WIDTH-210,10))
 
 # ==========================================================
-# GORGEOUS LEVEL SUMMARY SCREEN
+# LEVEL SUMMARY SCREEN
 # ==========================================================
 
 def draw_level_summary(level, score_gained, total_score):
