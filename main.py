@@ -9,12 +9,10 @@ from collections import deque
 # CONFIG
 # ==========================================================
 
-SCREEN_WIDTH = 1870
-SCREEN_HEIGHT = 920
+
 TILE_SIZE = 32
 
-VISIBLE_COLS = SCREEN_WIDTH // TILE_SIZE
-VISIBLE_ROWS = SCREEN_HEIGHT // TILE_SIZE
+
 
 WORLD_COLS = 120
 WORLD_ROWS = 120
@@ -49,6 +47,12 @@ pygame.init()
 pygame.mixer.init()
 #screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+
+SCREEN_WIDTH, SCREEN_HEIGHT = screen.get_size()
+
+VISIBLE_COLS = SCREEN_WIDTH // TILE_SIZE
+VISIBLE_ROWS = SCREEN_HEIGHT // TILE_SIZE
+
 pygame.display.set_caption("BRUCE'S Treasure")
 clock = pygame.time.Clock()
 font = pygame.font.SysFont("consolas", 24)
@@ -65,10 +69,22 @@ def load_sound(name):
         return pygame.mixer.Sound(path)
     return None
 
-if os.path.exists(os.path.join(ASSET_PATH, "music.mp3")):
-    pygame.mixer.music.load(os.path.join(ASSET_PATH, "music.mp3"))
-    pygame.mixer.music.set_volume(0.5)
-    pygame.mixer.music.play(-1)
+MUSIC_PLAYLIST = ["music.mp3", "01.ogg", "02.ogg", "03.ogg", "04.ogg", "05.ogg", "06.ogg", "07.ogg", "08.ogg"]
+SONG_FINISHED = pygame.USEREVENT + 1
+pygame.mixer.music.set_endevent(SONG_FINISHED)
+def play_next_song():
+    if MUSIC_PLAYLIST:
+        next_song = random.choice(MUSIC_PLAYLIST)
+        if os.path.exists(os.path.join(ASSET_PATH, next_song)):
+            pygame.mixer.music.load(os.path.join(ASSET_PATH, next_song))
+            pygame.mixer.music.set_volume(0.5)
+            pygame.mixer.music.play()
+        else:
+            print(f"Warning: {next_song} not found in assets.")
+    else:
+        print("No songs in playlist.")
+play_next_song()
+
 
 SND_SPIKE = load_sound("hit.wav")
 SND_PICKUP = load_sound("coin.wav")
@@ -144,6 +160,7 @@ ITEM_TYPES = {
     4: {"name":"Mushroom","points":25,"spawn":0.01,"sprite":"mushroom.png"},
     6: {"name":"Trophy","points":100,"spawn":0.005,"sprite":"trophy.png"},
     7: {"name":"Poison","points":-100,"spawn":0.01,"sprite":"poison.png"},
+    8: {"name":"Coins", "points":200, "spawn": 0.002, "sprite": "coins.png"}
 }
 
 def draw_stats_bar():
@@ -387,7 +404,8 @@ class Player:
             3: 0,   # Coin
             4: 0,   # Mushroom
             6: 0,   # Trophy
-            7: 0    # Poison
+            7: 0,    # Poison
+            8: 0    # Coins
         }
 
     def move(self, dx, dy, grid):
@@ -446,9 +464,10 @@ def save_score(score):
             f.write(str(s)+"\n")
 
 def draw_torch(player):
-    darkness = pygame.Surface((SCREEN_WIDTH,SCREEN_HEIGHT),pygame.SRCALPHA)
+    w, h = screen.get_size()
+    darkness = pygame.Surface((w,h),pygame.SRCALPHA)
     darkness.fill((0,0,0,220))
-    pygame.draw.circle(darkness,(0,0,0,0),(SCREEN_WIDTH//2,SCREEN_HEIGHT//2),200)
+    pygame.draw.circle(darkness,(0,0,0,0),(w//2,h//2),200)
     screen.blit(darkness,(0,0))
 
 def draw_minimap(grid,player):
@@ -472,10 +491,15 @@ def draw_level_summary(level, score_gained, total_score):
     # RAINBOW BACKGROUND GRADIENT
     for i in range(SCREEN_HEIGHT):
         t = i / SCREEN_HEIGHT
-        r = int(50 + 200 * math.sin(t * math.tau + 0))
-        g = int(50 + 200 * math.sin(t * math.tau + math.tau/3))
-        b = int(50 + 200 * math.sin(t * math.tau + math.tau*2/3))
-        pygame.draw.line(screen, (r,g,b), (0,i), (SCREEN_WIDTH,i))
+        # Calculate raw values
+        r_raw = int(50 + 200 * math.sin(t * math.tau + 0))
+        g_raw = int(50 + 200 * math.sin(t * math.tau + math.tau/3))
+        b_raw = int(50 + 200 * math.sin(t * math.tau + math.tau*2/3))
+        
+        # Clamp values between 0 and 255 to prevent crashes
+        r = max(0, min(255, r_raw))
+        g = max(0, min(255, g_raw))
+        b = max(0, min(255, b_raw))
     
     # MASSIVE "LEVEL COMPLETE!"
     title = huge_font.render("LEVEL COMPLETE!", True, COLOR_GOLD)
@@ -545,7 +569,8 @@ last_level_score = 0
 # ==========================================================
 
 def draw_splash():
-    screen.fill((0,0,0))
+    screen.fill((0, 0, 0))
+    
     ascii_title = [
         "  ██████╗ ██████╗ ██╗   ██╗ ██████╗███████╗",
         "  ██╔══██╗██╔══██╗██║   ██║██╔════╝██╔════╝",
@@ -554,18 +579,25 @@ def draw_splash():
         "  ██████╔╝██║  ██║╚██████╔╝╚██████╗███████╗",
         "  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝╚══════╝",
         "",
-        "                   v1.0",
+        "v1.0",
         "",
-        "             BRUCE'S TREASURE",
+        "BRUCE'S TREASURE",
         "",
-        "         > PRESS ANY KEY TO BEGIN <",
+        "> PRESS ANY KEY TO BEGIN <",
     ]
-    y_offset = 160
-    for line in ascii_title:
-        text = font.render(line, True, (0,255,0))
-        rect = text.get_rect(center=(SCREEN_WIDTH//2, y_offset))
+
+    line_spacing = 35
+    total_height = len(ascii_title) * line_spacing
+    
+    # Calculate the Y coordinate to start so the block is vertically centered
+    start_y = (SCREEN_HEIGHT // 2) - (total_height // 2)
+
+    for i, line in enumerate(ascii_title):
+        text = font.render(line, True, (0, 255, 0))
+        # Use start_y plus the current line's offset
+        current_y = start_y + (i * line_spacing)
+        rect = text.get_rect(center=(SCREEN_WIDTH // 2, current_y))
         screen.blit(text, rect)
-        y_offset += 35
 
 # ==========================================================
 # MAIN LOOP
@@ -578,6 +610,8 @@ while True:
     last_time = current_time
 
     for event in pygame.event.get():
+        if event.type == SONG_FINISHED:
+            play_next_song()
         if event.type == pygame.QUIT:
             pygame.quit(); sys.exit()
         if event.type == pygame.KEYDOWN:
