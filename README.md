@@ -492,8 +492,8 @@ flowchart TD
     B --> C[target_x = player.x * TILE_SIZE - SCREEN_WIDTH // 2]
     C --> D[target_y = player.y * TILE_SIZE - SCREEN_HEIGHT // 2]
     D --> E[Lerp Camera]
-    E --> F[camera_x += (target_x - camera_x) * 0.12]
-    F --> G[camera_y += (target_y - camera_y) * 0.12]
+    E --> F["camera_x += (target_x - camera_x) * 0.12"]
+    F --> G["camera_y += (target_y - camera_y) * 0.12"]
     G --> H[Return camera position]
 ```
 
