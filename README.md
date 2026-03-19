@@ -656,11 +656,11 @@ The main loop runs at 60 FPS and handles all game logic.
 
 ```mermaid
 flowchart TD
-    A[Main Loop<br/>while True] --> B[clock.tick(FPS)]
+    A[Main Loop<br/>while True] --> B["clock.tick(FPS)"]
     B --> C[Calculate delta_time]
     C --> D{Event Processing}
     D --> E[QUIT Event]
-    E -->|Yes| F[pygame.quit() & sys.exit()]
+    E -->|Yes| F["pygame.quit() & sys.exit()"]
     E -->|No| G{KEYDOWN Event}
     
     G -->|STATE_SPLASH| H[Initialize Game]
