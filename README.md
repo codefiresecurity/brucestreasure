@@ -324,7 +324,7 @@ flowchart TD
     F --> B
     
     G[SpikeSystem.update] --> H[For Each Spike]
-    H --> I[Update Phase<br/>sin(phase) determines active]
+    H --> I["Update Phase<br/>sin(phase) determines active"]
     I --> J{Extend or Retract?}
     J -->|Extend| K[progress += delta * 5]
     J -->|Retract| L[progress -= delta * 2.5]
