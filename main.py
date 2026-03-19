@@ -599,6 +599,32 @@ def draw_splash():
         rect = text.get_rect(center=(SCREEN_WIDTH // 2, current_y))
         screen.blit(text, rect)
 
+def find_safe_spawn(grid, candidate_x, candidate_y):
+    """Find nearest floor tile to the desired spawn point"""
+    if grid[int(candidate_y)][int(candidate_x)] == FLOOR:
+        return int(candidate_x), int(candidate_y)
+
+    # Spiral search outward (very reliable for small distances)
+    for radius in range(1, 12):           # safety limit
+        for dx in range(-radius, radius+1):
+            for dy in range(-radius, radius+1):
+                if abs(dx) + abs(dy) != radius:   # only check ring
+                    continue
+                nx = int(candidate_x) + dx
+                ny = int(candidate_y) + dy
+                if (0 <= nx < WORLD_COLS and 
+                    0 <= ny < WORLD_ROWS and 
+                    grid[ny][nx] == FLOOR):
+                    return nx, ny
+    
+    # Ultimate fallback – should almost never happen
+    print("WARNING: No safe spawn found near", candidate_x, candidate_y)
+    for y in range(WORLD_ROWS):
+        for x in range(WORLD_COLS):
+            if grid[y][x] == FLOOR:
+                return x, y
+    return 5, 5   # desperate fallback
+
 # ==========================================================
 # MAIN LOOP
 # ==========================================================
@@ -619,15 +645,18 @@ while True:
                 pygame.quit(); sys.exit()
             
             if state == STATE_SPLASH:
-                grid, start = generate_world()
+                grid, suggested_start = generate_world()
                 place_items(grid)               # ← restored
-                player = Player(start)
-                player.level = 1
+                safe_x, safe_y = find_safe_spawn(grid, suggested_start[0], suggested_start[1])
+
+                player = Player((safe_x, safe_y))
                 spike_system.generate_spikes(grid)
                 last_level_score = 0
                 state = STATE_PLAY
             elif state == STATE_SUMMARY:
-                grid, start = generate_world()
+                grid, suggested_start = generate_world()
+                safe_x, safe_y = find_safe_spawn(grid, suggested_start[0], suggested_start[1])
+                player = Player((safe_x, safe_y))
                 place_items(grid)               # ← restored
                 player.level += 1
                 spike_system.generate_spikes(grid)
