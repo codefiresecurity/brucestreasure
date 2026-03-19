@@ -162,7 +162,12 @@ ITEM_TYPES = {
     4: {"name": "Mushroom", "points": 25, "spawn": 0.01, "sprite": "mushroom.png"},
     6: {"name": "Trophy", "points": 100, "spawn": 0.005, "sprite": "trophy.png"},
     7: {"name": "Poison", "points": -100, "spawn": 0.01, "sprite": "poison.png"},
-    8: {"name": "Coins", "points": 200, "spawn": 0.002, "sprite": "coins.png"}
+    8: {"name": "Coins", "points": 200, "spawn": 0.002, "sprite": "coins.png"},
+    90: {"name": "Medium Yellow Gem", "points": 10000, "spawn": 0.002, "sprite": "gem10k.png"},
+    100: {"name": "Big Yellow Gem", "points": 100000, "spawn": 0.002, "sprite": "gem100k.png"},
+    110: {"name": "Purple Gem", "points": 80000, "spawn": 0.002, "sprite": "gem80ka.png"},
+    120: {"name": "Blue Gem", "points": 80000, "spawn": 0.002, "sprite": "gem80kb.png"},
+    130: {"name": "Green Gem", "points": 80000, "spawn": 0.002, "sprite": "gem80kc.png"}
 }
 
 def draw_stats_bar():
@@ -707,17 +712,70 @@ def get_narrative_for_level(level, narratives):
 
     return {"title": f"Level {level}", "story": "A new challenge awaits..."}
 
-def draw_narrative(level, title, story):
-    for i in range(SCREEN_HEIGHT):
-        t = i / SCREEN_HEIGHT
-        r = int(30 + 40 * t)
-        g = int(10 + 20 * t)
-        b = int(50 + 30 * t)
-        pygame.draw.line(screen, (r, g, b), (0, i), (SCREEN_WIDTH, i))
+# ==========================================================
+# NARRATIVE BACKGROUNDS
+# ==========================================================
 
-    overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 120))
-    screen.blit(overlay, (0, 0))
+NARRATIVE_BG_FILES = [
+    "narrative_01.jpg",
+    "narrative_02.png",
+    "narrative_03.png",
+]
+
+def load_narrative_backgrounds():
+    backgrounds = []
+    for name in NARRATIVE_BG_FILES:
+        path = os.path.join(ASSET_PATH, name)
+        if os.path.exists(path):
+            try:
+                img = pygame.image.load(path).convert()
+                img = pygame.transform.scale(img, (SCREEN_WIDTH, SCREEN_HEIGHT))
+                backgrounds.append(img)
+            except pygame.error as e:
+                print(f"Warning: could not load narrative background {name}: {e}")
+        else:
+            print(f"Warning: narrative background not found: {path}")
+    return backgrounds
+
+def choose_narrative_background():
+    global current_narrative_bg
+    if NARRATIVE_BACKGROUNDS:
+        current_narrative_bg = random.choice(NARRATIVE_BACKGROUNDS)
+    else:
+        current_narrative_bg = None
+
+NARRATIVE_BACKGROUNDS = load_narrative_backgrounds()
+current_narrative_bg = None
+
+def draw_narrative(level, title, story):
+    screen.fill((0, 0, 0))
+
+    # Draw background image if available, otherwise use gradient fallback
+    if current_narrative_bg:
+        screen.blit(current_narrative_bg, (0, 0))
+
+        # Fade the image so text reads clearly on top
+        fade = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        fade.fill((0, 0, 0, 110))
+        screen.blit(fade, (0, 0))
+    else:
+        for i in range(SCREEN_HEIGHT):
+            t = i / SCREEN_HEIGHT
+            r = int(30 + 40 * t)
+            g = int(10 + 20 * t)
+            b = int(50 + 30 * t)
+            pygame.draw.line(screen, (r, g, b), (0, i), (SCREEN_WIDTH, i))
+
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 120))
+        screen.blit(overlay, (0, 0))
+
+    # Optional extra text panel for readability
+    text_panel = pygame.Surface((SCREEN_WIDTH - 120, 360), pygame.SRCALPHA)
+    text_panel.fill((0, 0, 0, 110))
+    panel_x = 60
+    panel_y = 150
+    screen.blit(text_panel, (panel_x, panel_y))
 
     title_text = big_font.render(title, True, COLOR_GOLD)
     title_shadow = big_font.render(title, True, (100, 50, 0))
@@ -727,31 +785,36 @@ def draw_narrative(level, title, story):
     words = story.split()
     lines = []
     current_line = []
-    max_width = SCREEN_WIDTH - 100
+    max_width = SCREEN_WIDTH - 160
 
     for word in words:
-        test_line = ' '.join(current_line + [word])
+        test_line = " ".join(current_line + [word])
         test_surface = font.render(test_line, True, (255, 255, 255))
         if test_surface.get_width() <= max_width:
             current_line.append(word)
         else:
             if current_line:
-                lines.append(' '.join(current_line))
+                lines.append(" ".join(current_line))
             current_line = [word]
+
     if current_line:
-        lines.append(' '.join(current_line))
+        lines.append(" ".join(current_line))
 
     y_start = 300
     line_height = 35
     for i, line in enumerate(lines):
-        text = font.render(line, True, (220, 220, 230))
-        screen.blit(text, (SCREEN_WIDTH // 2 - text.get_width() // 2, y_start + i * line_height))
+        text_shadow = font.render(line, True, (20, 20, 20))
+        text = font.render(line, True, (235, 235, 240))
+        x = SCREEN_WIDTH // 2 - text.get_width() // 2
+        y = y_start + i * line_height
+        screen.blit(text_shadow, (x + 2, y + 2))
+        screen.blit(text, (x, y))
 
     level_text = font.render(f"~ Level {level} ~", True, COLOR_PURPLE)
-    screen.blit(level_text, (SCREEN_WIDTH // 2 - level_text.get_width() // 2, 500))
+    screen.blit(level_text, (SCREEN_WIDTH // 2 - level_text.get_width() // 2, 560))
 
     prompt = font.render("Press ANY KEY to Continue", True, COLOR_BLUE)
-    screen.blit(prompt, (SCREEN_WIDTH // 2 - prompt.get_width() // 2, 620))
+    screen.blit(prompt, (SCREEN_WIDTH // 2 - prompt.get_width() // 2, 640))
 
 # ==========================================================
 # GAME STATES
@@ -894,13 +957,15 @@ while True:
             if state == STATE_SPLASH:
                 persistent_level = 1
                 persistent_score = 0
-                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0}
+                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
                 current_narrative = get_narrative_for_level(persistent_level, narratives)
+                choose_narrative_background()
                 state = STATE_NARRATIVE
 
             elif state == STATE_SUMMARY:
                 persistent_level += 1
                 current_narrative = get_narrative_for_level(persistent_level, narratives)
+                choose_narrative_background()
                 state = STATE_NARRATIVE
 
             elif state == STATE_NARRATIVE:
@@ -910,7 +975,7 @@ while True:
             elif state == STATE_GAMEOVER:
                 persistent_level = 1
                 persistent_score = 0
-                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0}
+                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
                 state = STATE_SPLASH
 
     if state == STATE_SPLASH:
