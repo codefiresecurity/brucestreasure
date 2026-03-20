@@ -779,7 +779,7 @@ flowchart TD
     
     G[FireballSystem.update] --> H[Update Phase]
     H --> I{Calculate Position}
-    I --> J{sin(phase) determines extend}
+    I --> J{"sin(phase) determines extend"}
     J --> K{Fireball Extended?}
     K -->|Yes| L{Check Player Collision}
     K -->|No| M[Reset Hit Flag]
