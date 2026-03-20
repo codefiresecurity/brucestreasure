@@ -1143,9 +1143,35 @@ persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0}
 # SPLASH SCREEN
 # ==========================================================
 
-def draw_splash():
-    screen.fill((0, 0, 0))
+# Load splash screen assets - load at full resolution, not scaled to tile size
+def load_full_sprite(name):
+    path = os.path.join(ASSET_PATH, name)
+    if os.path.exists(path):
+        img = pygame.image.load(path).convert_alpha()
+        return img
+    return None
 
+PLAYER_BIG_SPRITE = load_full_sprite("playerBig.png")
+
+def draw_splash():
+    screen.fill((128, 128, 128))
+    
+    # Draw the player character on the left side
+    if PLAYER_BIG_SPRITE:
+        # Scale down the full resolution image to fit nicely on screen
+        # Original is 800x1280, scale to fit within a reasonable area
+        target_height = SCREEN_HEIGHT - 200  # Leave room for title and prompt
+        orig_w, orig_h = PLAYER_BIG_SPRITE.get_size()
+        scale_factor = target_height / orig_h
+        new_size = (int(orig_w * scale_factor), int(orig_h * scale_factor))
+        scaled_player = pygame.transform.scale(PLAYER_BIG_SPRITE, new_size)
+        
+        # Position on the left side
+        player_x = SCREEN_WIDTH // 4 - scaled_player.get_width() // 2
+        player_y = SCREEN_HEIGHT // 2 - scaled_player.get_height() // 2
+        screen.blit(scaled_player, (player_x, player_y))
+    
+    # Keep the ASCII art on the right side
     ascii_title = [
         "  ██████╗ ██████╗ ██╗   ██╗ ██████╗███████╗",
         "  ██╔══██╗██╔══██╗██║   ██║██╔════╝██╔════╝",
@@ -1168,7 +1194,8 @@ def draw_splash():
     for i, line in enumerate(ascii_title):
         text = font.render(line, True, (0, 255, 0))
         current_y = start_y + (i * line_spacing)
-        rect = text.get_rect(center=(SCREEN_WIDTH // 2, current_y))
+        # Position on the right side
+        rect = text.get_rect(center=(3 * SCREEN_WIDTH // 4, current_y))
         screen.blit(text, rect)
 
 def find_safe_spawn(grid, candidate_x, candidate_y):

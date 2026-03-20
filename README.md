@@ -134,6 +134,11 @@ The game uses several configuration constants defined at the top of [`main.py`](
 | `SPIKE_PROFUSION` | 0.07 | Probability of spike generation (7%) |
 | `TRAP_PROFUSION` | 0.08 | Probability of trap placement (8%) |
 | `MIN_PATH_WIDTH` | 2 | Minimum corridor width |
+| `FIREBALL_PROFUSION` | 0.03 | Probability of fireball generation (3%) |
+| `SPIKE_DAMAGE` | 20 | Damage taken when hit by a spike |
+| `FIREBALL_DAMAGE` | 25 | Damage taken when hit by a fireball |
+| `EXTRA_LIFE_THRESHOLD` | 250000 | Points needed to earn an extra life |
+| `HEALTH_CAP` | 100000 | Maximum health value (50% of score, capped) |
 
 ---
 
@@ -513,7 +518,7 @@ def get_camera(player):
 
 ## Game States
 
-The game uses 6 distinct states managed by the main loop.
+The game uses 7 distinct states managed by the main loop.
 
 ```mermaid
 stateDiagram-v2
@@ -521,9 +526,11 @@ stateDiagram-v2
     SPLASH --> NARRATIVE: Any Key Pressed
     NARRATIVE --> PLAY: Any Key Pressed
     PLAY --> SUMMARY: Goal Reached
-    PLAY --> FALLING: Trap Death
-    PLAY --> GAMEOVER: Spike Death
+    PLAY --> MESSAGE: Lose Life (spike/fireball)
+    PLAY --> MESSAGE: Trap (50% climb out)
+    PLAY --> FALLING: Trap Death (no lives left)
     SUMMARY --> NARRATIVE: Any Key (Next Level)
+    MESSAGE --> PLAY: Message Complete
     FALLING --> GAMEOVER: Animation Complete
     GAMEOVER --> SPLASH: Any Key Restart
     GAMEOVER --> [*]: ESC Pressed
@@ -533,32 +540,25 @@ stateDiagram-v2
 
 | State | Constant | Description |
 |-------|----------|-------------|
-| SPLASH | `STATE_SPLASH` | Title screen with ASCII art |
+| SPLASH | `STATE_SPLASH` | Title screen with ASCII art and player character |
 | NARRATIVE | `STATE_NARRATIVE` | Story text between levels |
 | PLAY | `STATE_PLAY` | Main gameplay |
 | SUMMARY | `STATE_SUMMARY` | Level completion celebration |
-| FALLING | `STATE_FALLING` | Trap death animation |
+| MESSAGE | `STATE_MESSAGE` | Life loss messages with backgrounds |
+| FALLING | `STATE_FALLING` | Trap death animation with pit background |
 | GAMEOVER | `STATE_GAMEOVER` | Death screen with high scores |
 
 ### State Handlers
 
-#### Splash Screen ([`main.py:853-879`](main.py:853))
+#### Splash Screen ([`main.py:1146-1195`](main.py:1146))
 
-Displays ASCII art title and version number:
-```
-  ██████╗ ██████╗ ██╗   ██╗ ██████╗███████╗
-  ██╔══██╗██╔══██╗██║   ██║██╔════╝██╔════╝
-  ██████╔╝██████╔╝██║   ██║██║     █████╗  
-  ██╔══██╗██╔══██╗██║   ██║██║     ██╔══╝  
-  ██████╔╝██║  ██║╚██████╔╝╚██████╗███████╗
-  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝╚══════╝
+Displays the player character image alongside ASCII art title:
+- **Player Character**: Large playerBig.png displayed on the left side
+- **ASCII Title**: Green ASCII art on the right side
+- **Version**: Displayed below the title
+- **Prompt**: "PRESS ANY KEY TO BEGIN" 
 
-v1.0
-
-BRUCE'S TREASURE
-
-> PRESS ANY KEY TO BEGIN <
-```
+The splash screen now features the full-resolution player character image (800x1280) scaled to fit, creating a more engaging title screen.
 
 #### Narrative Screen ([`main.py:750-817`](main.py:750))
 
@@ -724,6 +724,78 @@ while True:
 
 ---
 
+### 8. Health and Lives System
+
+Players now have a health and lives system that adds strategy to hazard encounters.
+
+#### Health System
+
+- **Health Calculation**: Health = 50% of current score (dynamically calculated)
+- **Health Cap**: Maximum health is 100,000
+- **Spike Damage**: 20 health points per spike hit
+- **Fireball Damage**: 25 health points per fireball hit
+- **Death Condition**: When health drops to 0 or below, player loses a life
+
+#### Lives System
+
+- **Starting Lives**: 5 lives at game start
+- **Extra Lives**: Earn +1 life for every 250,000 points
+- **On Life Loss**:
+  - Score resets to 0
+  - All collected items are lost
+  - Level progression is maintained
+  - "You lost a life!" message displayed
+- **Game Over**: Only triggers when lives reach 0
+
+#### Trap/Hole Mechanics
+
+When falling into a trap (hole):
+- 50% chance to climb out and survive
+- 50% chance to lose a life
+- Messages displayed: "You climbed out!" or "You lost a life!"
+
+#### Message Screens
+
+Life loss events show themed backgrounds:
+- `LIFE_LOSS_BG_FILES` - Backgrounds for life loss messages
+- `FALL_BG_FILES` - Backgrounds for falling animation (e.g., pit.jpg)
+
+---
+
+### 9. Fireball System
+
+Fireballs are projectile hazards that travel across corridors.
+
+```mermaid
+flowchart TD
+    A[FireballSystem.generate_fireballs] --> B[Find Corridors]
+    B --> C{Corridor >= 6 tiles?}
+    C -->|No| B
+    C -->|Yes| D{Adjacent to Wall?}
+    D -->|No| B
+    D -->|Yes| E{Random < FIREBALL_PROFUSION?}
+    E -->|Yes| F[Create Fireball]
+    E -->|No| B
+    
+    G[FireballSystem.update] --> H[Update Phase]
+    H --> I{Calculate Position}
+    I --> J{sin(phase) determines extend}
+    J --> K{Fireball Extended?}
+    K -->|Yes| L{Check Player Collision}
+    K -->|No| M[Reset Hit Flag]
+    L -->|Hit| N[Return hit = True]
+```
+
+#### Fireball Properties
+
+- **Spawn**: Corridors of 6+ tiles adjacent to walls
+- **Movement**: Emerge from wall, travel across, disappear into opposite wall
+- **Cycle**: Uses sine wave for extend/retract (like spikes)
+- **Collision**: Only damages player when extended (50%+ progress)
+- **Configurable**: `FIREBALL_PROFUSION`, `FIREBALL_DAMAGE`, `FIREBALL_SPEED`
+
+---
+
 ## UI Components
 
 ### Stats Bar ([`main.py:173-211`](main.py:173))
@@ -753,11 +825,12 @@ Darkness overlay creating a "torch lit" atmosphere:
 
 | Sound | Trigger | File |
 |-------|---------|------|
-| Spike hit | Player touched by spike | hit.wav |
+| Spike hit | Player touched by spike | spikehit.mp3 |
 | Item pickup | Collect any item | coin.wav |
 | Spike extend | Spike starts extending | spike_extend.wav |
 | Level win | Reach goal tile | win.wav |
-| Trap fall | Step on trap | trap_fall.wav |
+| Trap fall | Step on trap | fall.mp3 |
+| Extra life | Earn bonus life | extra_life.mp3 |
 
 ### Music System
 
@@ -810,6 +883,15 @@ flowchart TD
     assets --> narrative_01.jpg
     assets --> narrative_02.png
     assets --> narrative_03.png
+    
+    assets --> fireball.png
+    assets --> playerBig.png
+    assets --> pit.jpg
+    assets --> lostlife.png
+    
+    assets --> spikehit.mp3
+    assets --> fall.mp3
+    assets --> extra_life.mp3
 ```
 
 ---
@@ -845,4 +927,19 @@ flowchart TD
 
 ---
 
-*Documentation generated for Bruce's Treasure v1.0*
+*Documentation generated for Bruce's Treasure v1.1*
+
+## Changelog v1.1
+
+### New Features
+- Health and Lives system
+- Fireball hazards
+- Enhanced splash screen with player character
+- Message screens with themed backgrounds
+- Extra life bonus every 250k points
+
+### Changes
+- Spikes now deal damage instead of instant death
+- Traps have 50% chance to climb out
+- Game over only when lives reach 0
+- Health capped at 100,000
