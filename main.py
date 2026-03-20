@@ -29,6 +29,11 @@ DEBUG = False
 MIN_PATH_WIDTH = 2
 SPIKE_PROFUSION = 0.07  # 0.05=scarce, 0.20=spiky
 TRAP_PROFUSION = 0.08  # 0.05=few traps, 0.15=many traps (creates maze-like paths)
+SPIKE_DAMAGE = 20  # Damage taken when hit by a spike
+EXTRA_LIFE_THRESHOLD = 250000  # Points needed for extra life
+FIREBALL_PROFUSION = 0.03  # 0.01=rare, 0.10=common
+FIREBALL_DAMAGE = 25  # Damage taken when hit by fireball
+FIREBALL_SPEED = 3  # Speed of fireballs
 
 # Colors for summary
 COLOR_GOLD = (255, 215, 0)
@@ -91,6 +96,9 @@ SND_PICKUP = load_sound("coin.wav")
 SND_EXTEND = load_sound("spike_extend.wav") or SND_SPIKE
 SND_WIN = load_sound("win.wav") or SND_PICKUP
 SND_TRAP_FALL = load_sound("trap_fall.wav") or SND_SPIKE
+SND_EXTRA_LIFE = load_sound("extra_life.mp3")
+SND_FALL = load_sound("fall.mp3")
+SND_SPIKE_HIT = load_sound("spikehit.mp3")
 
 # ==========================================================
 # SPRITES
@@ -108,7 +116,8 @@ SPRITES = {
     WALL: load_sprite("wall.png"),
     SPIKE: load_sprite("spike.png"),
     GOAL: load_sprite("sun.png"),
-    TRAP: load_sprite("floor.png")
+    TRAP: load_sprite("floor.png"),
+    "FIREBALL": load_sprite("fireball.png")
 }
 
 PLAYER_SPRITE = load_sprite("player.png")
@@ -184,6 +193,14 @@ def draw_stats_bar():
 
     level_text = font.render(f"Level {player.level}", True, (220, 220, 255))
     bar_surf.blit(level_text, (padding, (bar_height - level_text.get_height()) // 2))
+
+    # Draw lives (hearts)
+    lives_text = font.render(f"Lives: {player.lives}", True, COLOR_RED)
+    bar_surf.blit(lives_text, (padding + 100, (bar_height - lives_text.get_height()) // 2))
+
+    # Draw health
+    health_text = font.render(f"Health: {player.health}", True, COLOR_GREEN)
+    bar_surf.blit(health_text, (padding + 220, (bar_height - health_text.get_height()) // 2))
 
     score_text = font.render(f"Score: {player.score:,}", True, COLOR_GOLD)
     score_x = SCREEN_WIDTH - score_text.get_width() - padding
@@ -450,14 +467,162 @@ class SpikeSystem:
         screen.blit(rotated, rect)
 
 # ==========================================================
+# FIREBALL SYSTEM
+# ==========================================================
+
+class FireballSystem:
+    def __init__(self):
+        self.fireballs = []
+
+    def generate_fireballs(self, grid):
+        self.fireballs.clear()
+        
+        # Find horizontal corridors (rows of floor tiles)
+        for y in range(1, WORLD_ROWS - 1):
+            # Check if this row has a long enough corridor
+            for x in range(1, WORLD_COLS - 1):
+                if grid[y][x] == FLOOR and grid[y][x+1] == FLOOR:
+                    # Found start of corridor, count length
+                    length = 0
+                    tx = x
+                    while tx < WORLD_COLS and grid[y][tx] == FLOOR:
+                        length += 1
+                        tx += 1
+                    
+                    # If corridor is at least 6 tiles long, can spawn fireball
+                    if length >= 6:
+                        # Check if at least one end is adjacent to a wall (where fireball spawns)
+                        has_wall_left = x > 0 and grid[y][x-1] == WALL
+                        has_wall_right = tx < WORLD_COLS and grid[y][tx] == WALL
+                        
+                        if (has_wall_left or has_wall_right) and random.random() < FIREBALL_PROFUSION:
+                            # Set start and end positions
+                            start_x = x - 1 if has_wall_left else tx
+                            end_x = x + length - 1 if has_wall_left else x - 1
+                            
+                            self.fireballs.append({
+                                "x": start_x,
+                                "y": y,
+                                "start_x": start_x,
+                                "end_x": end_x,
+                                "direction": -1 if has_wall_left else 1,
+                                "grid_y": y,  # Keep track of which row
+                                "phase": random.random() * math.tau,  # Random start phase
+                                "hit_last_frame": False
+                            })
+        
+        # Find vertical corridors (columns of floor tiles)
+        for x in range(1, WORLD_COLS - 1):
+            for y in range(1, WORLD_ROWS - 1):
+                if grid[y][x] == FLOOR and grid[y+1][x] == FLOOR:
+                    length = 0
+                    ty = y
+                    while ty < WORLD_ROWS and grid[ty][x] == FLOOR:
+                        length += 1
+                        ty += 1
+                    
+                    if length >= 6:
+                        has_wall_above = y > 0 and grid[y-1][x] == WALL
+                        has_wall_below = ty < WORLD_ROWS and grid[ty][x] == WALL
+                        
+                        if (has_wall_above or has_wall_below) and random.random() < FIREBALL_PROFUSION:
+                            # Set start and end positions
+                            start_y = y - 1 if has_wall_above else ty
+                            end_y = y + length - 1 if has_wall_above else y - 1
+                            
+                            self.fireballs.append({
+                                "x": x,
+                                "y": start_y,
+                                "start_y": start_y,
+                                "end_y": end_y,
+                                "direction": -1 if has_wall_above else 1,
+                                "grid_x": x,  # Keep track of which column
+                                "vertical": True,
+                                "phase": random.random() * math.tau,  # Random start phase
+                                "hit_last_frame": False
+                            })
+
+    def update(self, delta_time, player_x, player_y, grid):
+        hit = False
+        
+        for fb in self.fireballs:
+            # Update extend progress (like spikes)
+            fb["phase"] = fb.get("phase", 0) + delta_time * 2
+            
+            # Calculate extend progress (0 to 1 to 0 cycle)
+            progress = (math.sin(fb["phase"]) + 1) / 2  # 0 to 1
+            
+            # Only check collision and draw when fireball is extended
+            if progress > 0.3:
+                # Move fireball based on extend progress
+                if fb.get("vertical"):
+                    # Calculate position between walls based on progress
+                    start_y = fb.get("start_y", fb["y"])
+                    end_y = fb.get("end_y", fb["y"])
+                    fb["y"] = start_y + (end_y - start_y) * progress
+                    
+                    # Check collision with player (only when extended)
+                    if progress > 0.5 and abs(fb["y"] - player_y) < 0.8 and fb["grid_x"] == player_x:
+                        if not fb.get("hit_last_frame"):
+                            hit = True
+                            fb["hit_last_frame"] = True
+                            particles.add_burst(
+                                player_x * TILE_SIZE + TILE_SIZE // 2,
+                                player_y * TILE_SIZE + TILE_SIZE // 2,
+                                color=(255, 100, 0)
+                            )
+                else:
+                    # Horizontal movement
+                    start_x = fb.get("start_x", fb["x"])
+                    end_x = fb.get("end_x", fb["x"])
+                    fb["x"] = start_x + (end_x - start_x) * progress
+                    
+                    # Check collision with player (only when extended)
+                    if progress > 0.5 and abs(fb["x"] - player_x) < 0.8 and fb["grid_y"] == player_y:
+                        if not fb.get("hit_last_frame"):
+                            hit = True
+                            fb["hit_last_frame"] = True
+                            particles.add_burst(
+                                player_x * TILE_SIZE + TILE_SIZE // 2,
+                                player_y * TILE_SIZE + TILE_SIZE // 2,
+                                color=(255, 100, 0)
+                            )
+            
+            # Reset hit flag when fireball retracts
+            if progress < 0.3:
+                fb["hit_last_frame"] = False
+        
+        return hit
+
+    def draw(self, cam_x, cam_y):
+        if not SPRITES.get("FIREBALL"):
+            # Draw fallback circle if no sprite
+            for fb in self.fireballs:
+                px = fb["x"] * TILE_SIZE - cam_x + TILE_SIZE // 2
+                py = fb["y"] * TILE_SIZE - cam_y + TILE_SIZE // 2
+                pygame.draw.circle(screen, (255, 100, 0), (int(px), int(py)), TILE_SIZE // 3)
+        else:
+            for fb in self.fireballs:
+                px = fb["x"] * TILE_SIZE - cam_x
+                py = fb["y"] * TILE_SIZE - cam_y
+                
+                # Flip sprite based on direction
+                sprite = SPRITES["FIREBALL"]
+                if fb["direction"] < 0:
+                    sprite = pygame.transform.flip(sprite, True, False)
+                
+                screen.blit(sprite, (px, py))
+
+# ==========================================================
 # PLAYER
 # ==========================================================
 
 class Player:
-    def __init__(self, start, level=1, score=0, collected=None):
+    def __init__(self, start, level=1, score=0, collected=None, lives=5):
         self.x, self.y = int(start[0]), int(start[1])
         self.last_safe_x, self.last_safe_y = self.x, self.y
         self.score = score
+        self.lives = lives
         self.dead = False
         self.move_delay = 140
         self.last_move_time = 0
@@ -473,6 +638,11 @@ class Player:
         if collected:
             default_collected.update(collected)
         self.collected = default_collected
+
+    @property
+    def health(self):
+        """Health is 50% of score, capped at 100k"""
+        return min(100000, int(self.score * 0.5))
 
     def move(self, dx, dy, grid):
         now = pygame.time.get_ticks()
@@ -502,7 +672,41 @@ class Player:
             return "TRAP_DEATH"
 
         if tile in ITEM_TYPES:
+            old_score = self.score
             self.score += ITEM_TYPES[tile]["points"]
+            
+            # Check if score went negative (from poison) - lose a life
+            if self.score < 0:
+                self.score = 0
+                self.lives -= 1
+                persistent_lives = self.lives
+                self.collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
+                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
+                particles.add_burst(
+                    self.x * TILE_SIZE + TILE_SIZE // 2,
+                    self.y * TILE_SIZE + TILE_SIZE // 2,
+                    color=(255, 0, 0)
+                )
+                if self.lives <= 0:
+                    self.dead = True
+                    return "NEGATIVE_DEATH"
+            else:
+                # Check for extra life every 250k points
+                old_lives_threshold = old_score // EXTRA_LIFE_THRESHOLD
+                new_lives_threshold = self.score // EXTRA_LIFE_THRESHOLD
+                if new_lives_threshold > old_lives_threshold:
+                    self.lives += 1
+                    persistent_lives = self.lives
+                    # Play extra life sound
+                    if SND_EXTRA_LIFE:
+                        SND_EXTRA_LIFE.play()
+                    # Show extra life message
+                    particles.add_burst(
+                        self.x * TILE_SIZE + TILE_SIZE // 2,
+                        self.y * TILE_SIZE + TILE_SIZE // 2,
+                        color=(0, 255, 255)
+                    )
+            
             self.collected[tile] += 1
             if SND_PICKUP:
                 SND_PICKUP.play()
@@ -593,6 +797,9 @@ def draw_world_scene():
 
     for spike in spike_system.spikes.values():
         spike_system.draw_spike(spike, cam_x, cam_y)
+    
+    # Draw fireballs
+    fireball_system.draw(cam_x, cam_y)
 
     px = player.x * TILE_SIZE - cam_x
     py = player.y * TILE_SIZE - cam_y
@@ -607,10 +814,18 @@ def draw_world_scene():
     draw_stats_bar()
 
 def draw_fall_transition():
+    global current_message_bg_img
+    
     elapsed = pygame.time.get_ticks() - fall_start_time
     progress = min(1.0, elapsed / fall_duration)
 
-    draw_world_scene()
+    # Use fall background if available
+    if FALL_BACKGROUNDS:
+        if current_message_bg_img is None:
+            current_message_bg_img = FALL_BACKGROUNDS[0] if len(FALL_BACKGROUNDS) == 1 else random.choice(FALL_BACKGROUNDS)
+        screen.blit(current_message_bg_img, (0, 0))
+    else:
+        screen.fill((0, 0, 0))
 
     cx = SCREEN_WIDTH // 2
     cy = SCREEN_HEIGHT // 2
@@ -722,6 +937,15 @@ NARRATIVE_BG_FILES = [
     "narrative_03.png",
 ]
 
+# Message screen backgrounds
+LIFE_LOSS_BG_FILES = [
+    "lostlife.png",
+]
+
+FALL_BG_FILES = [
+    "pit.jpg",
+]
+
 def load_narrative_backgrounds():
     backgrounds = []
     for name in NARRATIVE_BG_FILES:
@@ -746,6 +970,25 @@ def choose_narrative_background():
 
 NARRATIVE_BACKGROUNDS = load_narrative_backgrounds()
 current_narrative_bg = None
+
+# Load life loss backgrounds
+def load_message_backgrounds(file_list):
+    backgrounds = []
+    for name in file_list:
+        path = os.path.join(ASSET_PATH, name)
+        if os.path.exists(path):
+            try:
+                img = pygame.image.load(path).convert()
+                img = pygame.transform.scale(img, (SCREEN_WIDTH, SCREEN_HEIGHT))
+                backgrounds.append(img)
+            except pygame.error as e:
+                print(f"Warning: could not load {name}: {e}")
+    return backgrounds
+
+LIFE_LOSS_BACKGROUNDS = load_message_backgrounds(LIFE_LOSS_BG_FILES)
+FALL_BACKGROUNDS = load_message_backgrounds(FALL_BG_FILES)
+
+current_message_bg = None  # For message screens
 
 def draw_narrative(level, title, story):
     screen.fill((0, 0, 0))
@@ -817,6 +1060,47 @@ def draw_narrative(level, title, story):
     screen.blit(prompt, (SCREEN_WIDTH // 2 - prompt.get_width() // 2, 640))
 
 # ==========================================================
+# MESSAGE SCREEN (Life loss, etc.)
+# ==========================================================
+
+# Track current message background
+current_message_bg_img = None
+message_bg_initialized = False
+
+def draw_message_screen(message, color=COLOR_RED, msg_type="life_loss"):
+    """Draw a message screen with appropriate background"""
+    global current_message_bg_img, message_bg_initialized
+    
+    # Select background based on message type
+    if msg_type == "fall":
+        bg_list = FALL_BACKGROUNDS
+    if msg_type == "life_loss":
+        bg_list = LIFE_LOSS_BACKGROUNDS
+    
+    # Pick one background when message starts and keep it
+    if bg_list and not message_bg_initialized:
+        current_message_bg_img = random.choice(bg_list) if len(bg_list) > 1 else bg_list[0]
+        message_bg_initialized = True
+    
+    if bg_list and current_message_bg_img:
+        
+        screen.blit(current_message_bg_img, (0, 0))
+        fade = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        fade.fill((0, 0, 0, 150))
+        screen.blit(fade, (0, 0))
+    else:
+        screen.fill((0, 0, 0))
+    
+    # Draw the message
+    msg_surf = big_font.render(message, True, color)
+    screen.blit(msg_surf, (SCREEN_WIDTH // 2 - msg_surf.get_width() // 2, SCREEN_HEIGHT // 2 - 30))
+    
+    # Draw lives remaining (only for life loss messages)
+    if msg_type == "life_loss" and player:
+        lives_msg = font.render(f"Lives remaining: {player.lives}", True, COLOR_RED)
+        screen.blit(lives_msg, (SCREEN_WIDTH // 2 - lives_msg.get_width() // 2, SCREEN_HEIGHT // 2 + 40))
+
+# ==========================================================
 # GAME STATES
 # ==========================================================
 
@@ -826,11 +1110,13 @@ STATE_SUMMARY = 2
 STATE_GAMEOVER = 3
 STATE_NARRATIVE = 4
 STATE_FALLING = 5
+STATE_MESSAGE = 6  # For life loss messages
 
 state = STATE_SPLASH
 grid = None
 player = None
 spike_system = SpikeSystem()
+fireball_system = FireballSystem()
 particles = ParticleSystem()
 last_time = pygame.time.get_ticks()
 last_level_score = 0
@@ -842,8 +1128,15 @@ death_type = None
 narratives = load_narratives()
 current_narrative = None
 
+# Message screen variables
+message_text = ""
+message_type = "life_loss"  # "life_loss" or "fall"
+message_start_time = 0
+message_duration = 1500
+
 persistent_level = 1
 persistent_score = 0
+persistent_lives = 5
 persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0}
 
 # ==========================================================
@@ -903,7 +1196,7 @@ def find_safe_spawn(grid, candidate_x, candidate_y):
 
 def start_level(level_number):
     global grid, player, last_level_score, current_narrative
-    global persistent_score, persistent_collected
+    global persistent_score, persistent_collected, persistent_lives
 
     grid, suggested_start = generate_world()
     safe_x, safe_y = find_safe_spawn(grid, suggested_start[0], suggested_start[1])
@@ -912,7 +1205,8 @@ def start_level(level_number):
         (safe_x, safe_y),
         level=level_number,
         score=persistent_score,
-        collected=persistent_collected.copy()
+        collected=persistent_collected.copy(),
+        lives=persistent_lives
     )
 
     place_items(grid)
@@ -928,6 +1222,7 @@ def start_level(level_number):
 
     place_traps(grid, (safe_x, safe_y), goal_pos or (WORLD_COLS // 2, WORLD_ROWS // 2))
     spike_system.generate_spikes(grid)
+    fireball_system.generate_fireballs(grid)
     particles.particles.clear()
     last_level_score = player.score
 
@@ -957,6 +1252,7 @@ while True:
             if state == STATE_SPLASH:
                 persistent_level = 1
                 persistent_score = 0
+                persistent_lives = 5
                 persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
                 current_narrative = get_narrative_for_level(persistent_level, narratives)
                 choose_narrative_background()
@@ -975,6 +1271,7 @@ while True:
             elif state == STATE_GAMEOVER:
                 persistent_level = 1
                 persistent_score = 0
+                persistent_lives = 5
                 persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
                 state = STATE_SPLASH
 
@@ -986,6 +1283,33 @@ while True:
     elif state == STATE_PLAY:
         particles.update(delta_time)
         player.dead = spike_system.update(delta_time, player.x, player.y, particles)
+        
+        # Update fireballs and check for hits
+        fireball_hit = fireball_system.update(delta_time, player.x, player.y, grid)
+        if fireball_hit and not player.dead:
+            # Fireball hit deals damage
+            player.score = max(0, player.score - FIREBALL_DAMAGE)
+            # Check if health dropped to 0 or below (lose a life)
+            if player.health <= 0:
+                player.lives -= 1
+                persistent_lives = player.lives
+                player.score = 0
+                player.collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
+                persistent_score = 0
+                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
+                particles.add_burst(
+                    player.x * TILE_SIZE + TILE_SIZE // 2,
+                    player.y * TILE_SIZE + TILE_SIZE // 2,
+                    color=(255, 0, 0)
+                )
+                if player.lives <= 0:
+                    save_score(persistent_score)
+                    state = STATE_GAMEOVER
+                else:
+                    message_text = "You lost a life!"
+                    message_type = "life_loss"
+                    message_start_time = pygame.time.get_ticks()
+                    state = STATE_MESSAGE
 
         keys = pygame.key.get_pressed()
         dx = dy = 0
@@ -1002,19 +1326,77 @@ while True:
 
         if result == "TRAP_DEATH":
             death_type = "trap"
-            fall_start_time = pygame.time.get_ticks()
-            persistent_score = player.score
-            persistent_collected = player.collected.copy()
-            state = STATE_FALLING
+            if SND_FALL:
+                SND_FALL.play()
+            # 50% chance to climb out
+            if random.random() < 0.5:
+                # Player climbed out - show message and stay in game
+                player.x = player.last_safe_x
+                player.y = player.last_safe_y
+                # Show "you climbed out" message using message screen
+                message_text = "You climbed out!"
+                message_type = "fall"
+                message_start_time = pygame.time.get_ticks()
+                message_bg_initialized = False  # Reset background for new message
+                state = STATE_MESSAGE
+            else:
+                # Player couldn't climb out - lose a life
+                player.lives -= 1
+                persistent_lives = player.lives
+                
+                # Lost a life - reset score and items, keep level progression
+                player.score = 0
+                player.collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
+                persistent_score = 0
+                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
+                
+                # Show "You lost a life!" message
+                message_text = "You lost a life!"
+                message_type = "life_loss"
+                message_start_time = pygame.time.get_ticks()
+                message_bg_initialized = False  # Reset background for new message
+                
+                # Check if out of lives
+                if player.lives <= 0:
+                    fall_start_time = pygame.time.get_ticks()
+                    state = STATE_FALLING
+                else:
+                    state = STATE_MESSAGE
             continue
 
         if player.dead:
-            if SND_SPIKE:
+            if SND_SPIKE_HIT:
+                SND_SPIKE_HIT.play()
+            elif SND_SPIKE:
                 SND_SPIKE.play()
-            persistent_score = player.score
-            persistent_collected = player.collected.copy()
-            save_score(player.score)
-            state = STATE_GAMEOVER
+            # Spike hit deals damage instead of instant death
+            player.score = max(0, player.score - SPIKE_DAMAGE)
+            player.dead = False  # Reset dead flag
+            # Check if health dropped to 0 or below (lose a life)
+            if player.health <= 0:
+                player.lives -= 1
+                persistent_lives = player.lives
+                # Lost a life - reset score and items, keep level progression
+                player.score = 0
+                player.collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
+                persistent_score = 0
+                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
+                particles.add_burst(
+                    player.x * TILE_SIZE + TILE_SIZE // 2,
+                    player.y * TILE_SIZE + TILE_SIZE // 2,
+                    color=(255, 0, 0)
+                )
+                # Check if out of lives
+                if player.lives <= 0:
+                    save_score(persistent_score)
+                    state = STATE_GAMEOVER
+                else:
+                    # Show message screen
+                    message_text = "You lost a life!"
+                    message_type = "life_loss"
+                    message_start_time = pygame.time.get_ticks()
+                    message_bg_initialized = False  # Reset background for new message
+                    state = STATE_MESSAGE
             continue
 
         if result == "NEXT":
@@ -1023,6 +1405,19 @@ while True:
             if SND_WIN:
                 SND_WIN.play()
             state = STATE_SUMMARY
+            continue
+
+        if result == "NEGATIVE_DEATH":
+            # Score went negative (poison) - show message, game over if out of lives
+            if player.lives <= 0:
+                save_score(player.score)
+                state = STATE_GAMEOVER
+            else:
+                message_text = "You lost a life!"
+                message_type = "life_loss"
+                message_start_time = pygame.time.get_ticks()
+                message_bg_initialized = False  # Reset background for new message
+                state = STATE_MESSAGE
             continue
 
         draw_world_scene()
@@ -1039,6 +1434,22 @@ while True:
         pygame.display.flip()
         continue
 
+    elif state == STATE_MESSAGE:
+        # Determine message color based on content
+        if "climbed out" in message_text.lower():
+            msg_color = COLOR_GREEN
+        else:
+            msg_color = COLOR_RED
+        
+        draw_message_screen(message_text, msg_color, message_type)
+        pygame.display.flip()
+        
+        # Check if message duration has passed
+        if pygame.time.get_ticks() - message_start_time >= message_duration:
+            # Return to play state
+            state = STATE_PLAY
+        continue
+
     elif state == STATE_FALLING:
         draw_fall_transition()
         pygame.display.flip()
@@ -1051,7 +1462,10 @@ while True:
     elif state == STATE_GAMEOVER:
         screen.fill((0, 0, 0))
         over = big_font.render("GAME OVER", True, COLOR_RED)
-        screen.blit(over, (SCREEN_WIDTH // 2 - over.get_width() // 2, 250))
+        screen.blit(over, (SCREEN_WIDTH // 2 - over.get_width() // 2, 200))
+        
+        lives_msg = font.render("Out of lives!", True, COLOR_RED)
+        screen.blit(lives_msg, (SCREEN_WIDTH // 2 - lives_msg.get_width() // 2, 280))
 
         scores = load_scores()
         y = 350
@@ -1065,7 +1479,7 @@ while True:
             y += 35
 
         restart = font.render("Press ESC to Quit | Any Key to Restart", True, COLOR_BLUE)
-        screen.blit(restart, (SCREEN_WIDTH // 2 - restart.get_width() // 2, 600))
+        screen.blit(restart, (SCREEN_WIDTH // 2 - restart.get_width() // 2, 620))
 
         pygame.display.flip()
 
