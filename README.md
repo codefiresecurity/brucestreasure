@@ -752,7 +752,7 @@ Players now have a health and lives system that adds strategy to hazard encounte
 When falling into a trap (hole):
 - 50% chance to climb out and survive
 - 50% chance to lose a life
-- Messages displayed: "You climbed out!" or "You lost a life!"
+- Messages that gets displayed: "You climbed out!" or "You lost a life!"
 
 #### Message Screens
 
