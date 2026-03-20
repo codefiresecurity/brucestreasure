@@ -762,6 +762,7 @@ Life loss events show themed backgrounds:
 
 ---
 
+
 ### 9. Fireball System
 
 Fireballs are projectile hazards that travel across corridors.
