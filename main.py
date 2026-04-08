@@ -20,6 +20,7 @@ FPS = 60
 FLOOR = 0
 WALL = 1
 SPIKE = 2
+TNT = 5
 TRAP = 10  # Trap/hole - can be stepped on, but kills the player
 GOAL = 9
 
@@ -34,6 +35,18 @@ EXTRA_LIFE_THRESHOLD = 250000  # Points needed for extra life
 FIREBALL_PROFUSION = 0.03  # 0.01=rare, 0.10=common
 FIREBALL_DAMAGE = 25  # Damage taken when hit by fireball
 FIREBALL_SPEED = 3  # Speed of fireballs
+MAX_HEALTH = 100000
+HEALTH_PER_SCORE_POINT = 0.5
+TNT_PROFUSION = 0.01
+TNT_TRIGGER_RADIUS = 1  # Chebyshev distance
+TNT_BLAST_RADIUS = 2  # Chebyshev distance
+TNT_DIG_RADIUS = 1
+TNT_FUSE_SECONDS = 1.1
+TNT_DAMAGE_BY_DISTANCE = {
+    0: 1.0,
+    1: 0.66,
+    2: 0.33,
+}
 
 # Colors for summary
 COLOR_GOLD = (255, 215, 0)
@@ -99,6 +112,8 @@ SND_TRAP_FALL = load_sound("trap_fall.wav") or SND_SPIKE
 SND_EXTRA_LIFE = load_sound("extra_life.mp3")
 SND_FALL = load_sound("fall.mp3")
 SND_SPIKE_HIT = load_sound("spikehit.mp3")
+SND_TNT_IGNITE = load_sound("tnt_ignite.mp3") or SND_EXTEND
+SND_TNT_BOOM = load_sound("tnt_explode.mp3") or SND_SPIKE_HIT
 
 # ==========================================================
 # SPRITES
@@ -115,6 +130,7 @@ SPRITES = {
     FLOOR: load_sprite("floor.png"),
     WALL: load_sprite("wall.png"),
     SPIKE: load_sprite("spike.png"),
+    TNT: load_sprite("tnt.png"),
     GOAL: load_sprite("sun.png"),
     TRAP: load_sprite("floor.png"),
     "FIREBALL": load_sprite("fireball.png")
@@ -179,6 +195,12 @@ ITEM_TYPES = {
     130: {"name": "Green Gem", "points": 80000, "spawn": 0.002, "sprite": "gem80kc.png"}
 }
 
+def make_empty_collected():
+    return {tile_id: 0 for tile_id in ITEM_TYPES}
+
+def score_to_health_amount(score_points):
+    return int(score_points * HEALTH_PER_SCORE_POINT)
+
 def draw_stats_bar():
     if player is None:
         return
@@ -199,7 +221,7 @@ def draw_stats_bar():
     bar_surf.blit(lives_text, (padding + 100, (bar_height - lives_text.get_height()) // 2))
 
     # Draw health
-    health_text = font.render(f"Health: {player.health}", True, COLOR_GREEN)
+    health_text = font.render(f"Health: {player.health:,}", True, COLOR_GREEN)
     bar_surf.blit(health_text, (padding + 220, (bar_height - health_text.get_height()) // 2))
 
     score_text = font.render(f"Score: {player.score:,}", True, COLOR_GOLD)
@@ -384,6 +406,172 @@ def would_trap_create_dead_end(grid, x, y):
                 floor_count += 1
     return floor_count < 2
 
+def place_tnt(grid, start_pos, goal_pos):
+    safe_radius = 6
+    placed_positions = set()
+
+    for y in range(1, WORLD_ROWS - 1):
+        for x in range(1, WORLD_COLS - 1):
+            if grid[y][x] != FLOOR:
+                continue
+
+            start_dist = abs(x - start_pos[0]) + abs(y - start_pos[1])
+            goal_dist = abs(x - goal_pos[0]) + abs(y - goal_pos[1])
+            if start_dist < safe_radius or goal_dist < safe_radius:
+                continue
+
+            if any(max(abs(x - px), abs(y - py)) <= 2 for px, py in placed_positions):
+                continue
+
+            nearby_walls = 0
+            nearby_hazards = 0
+            for dy in range(-1, 2):
+                for dx in range(-1, 2):
+                    if dx == 0 and dy == 0:
+                        continue
+                    tile = grid[y + dy][x + dx]
+                    if tile == WALL:
+                        nearby_walls += 1
+                    elif tile == TRAP:
+                        nearby_hazards += 1
+
+            if nearby_walls == 0 and nearby_hazards == 0:
+                continue
+
+            if random.random() < TNT_PROFUSION:
+                grid[y][x] = TNT
+                placed_positions.add((x, y))
+
+# ==========================================================
+# TNT SYSTEM
+# ==========================================================
+
+class TNTSystem:
+    def __init__(self):
+        self.charges = {}
+
+    def rebuild(self, grid):
+        self.charges = {}
+        for y in range(WORLD_ROWS):
+            for x in range(WORLD_COLS):
+                if grid[y][x] == TNT:
+                    self.charges[(x, y)] = {
+                        "lit": False,
+                        "timer": TNT_FUSE_SECONDS,
+                        "spark_timer": 0.0,
+                    }
+
+    def update(self, delta_time, player, grid, particles, spike_system, fireball_system):
+        total_damage = 0
+        reference_health = player.health
+        explosions = []
+
+        for (x, y), charge in list(self.charges.items()):
+            distance = max(abs(player.x - x), abs(player.y - y))
+            if not charge["lit"] and distance <= TNT_TRIGGER_RADIUS:
+                charge["lit"] = True
+                charge["timer"] = TNT_FUSE_SECONDS
+                if SND_TNT_IGNITE:
+                    SND_TNT_IGNITE.play()
+
+            if not charge["lit"]:
+                continue
+
+            charge["timer"] -= delta_time
+            charge["spark_timer"] += delta_time
+
+            while charge["spark_timer"] >= 0.12:
+                charge["spark_timer"] -= 0.12
+                particles.add_burst(
+                    x * TILE_SIZE + TILE_SIZE // 2,
+                    y * TILE_SIZE + TILE_SIZE // 3,
+                    color=(255, 200, 60),
+                    count=2
+                )
+
+            if charge["timer"] <= 0:
+                explosions.append((x, y))
+
+        for x, y in explosions:
+            damage = self.explode(
+                x,
+                y,
+                player.x,
+                player.y,
+                reference_health,
+                grid,
+                particles,
+                spike_system,
+                fireball_system,
+            )
+            total_damage += damage
+            reference_health = max(0, reference_health - damage)
+
+        return total_damage
+
+    def explode(self, x, y, player_x, player_y, player_health, grid, particles, spike_system, fireball_system):
+        if (x, y) not in self.charges:
+            return 0
+
+        self.charges.pop((x, y), None)
+        grid[y][x] = FLOOR
+
+        if SND_TNT_BOOM:
+            SND_TNT_BOOM.play()
+
+        particles.add_burst(
+            x * TILE_SIZE + TILE_SIZE // 2,
+            y * TILE_SIZE + TILE_SIZE // 2,
+            color=(255, 150, 50),
+            count=24
+        )
+
+        protected_walls = spike_system.origin_positions() | fireball_system.anchor_positions()
+        for dy in range(-TNT_DIG_RADIUS, TNT_DIG_RADIUS + 1):
+            for dx in range(-TNT_DIG_RADIUS, TNT_DIG_RADIUS + 1):
+                if max(abs(dx), abs(dy)) > TNT_DIG_RADIUS:
+                    continue
+
+                nx, ny = x + dx, y + dy
+                if not (0 <= nx < WORLD_COLS and 0 <= ny < WORLD_ROWS):
+                    continue
+
+                if grid[ny][nx] == WALL and (nx, ny) not in protected_walls:
+                    grid[ny][nx] = FLOOR
+
+        distance = max(abs(player_x - x), abs(player_y - y))
+        if distance > TNT_BLAST_RADIUS:
+            return 0
+        blast_ratio = TNT_DAMAGE_BY_DISTANCE.get(distance, 0.0)
+        if blast_ratio <= 0 or player_health <= 0:
+            return 0
+
+        if distance == 0:
+            return player_health
+
+        return max(1, math.ceil(player_health * blast_ratio))
+
+    def draw_tile(self, x, y, rect):
+        charge = self.charges.get((x, y))
+        if SPRITES.get(TNT):
+            screen.blit(SPRITES[TNT], rect)
+        else:
+            body = rect.inflate(-8, -6)
+            pygame.draw.rect(screen, (180, 40, 40), body, border_radius=4)
+            pygame.draw.rect(screen, (70, 30, 20), body, width=2, border_radius=4)
+            fuse_start = (body.centerx, body.top + 2)
+            fuse_end = (body.centerx + 5, body.top - 6)
+            pygame.draw.line(screen, (240, 220, 120), fuse_start, fuse_end, 2)
+
+        if charge and charge["lit"]:
+            glow_alpha = 120 + int(80 * math.sin(pygame.time.get_ticks() * 0.03))
+            glow = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+            pygame.draw.rect(glow, (255, 180, 40, glow_alpha), glow.get_rect(), border_radius=8)
+            screen.blit(glow, rect.topleft)
+            spark_x = rect.centerx + 4
+            spark_y = rect.top + 4
+            pygame.draw.circle(screen, (255, 255, 140), (spark_x, spark_y), 3)
+
 # ==========================================================
 # SPIKE SYSTEM
 # ==========================================================
@@ -391,6 +579,9 @@ def would_trap_create_dead_end(grid, x, y):
 class SpikeSystem:
     def __init__(self):
         self.spikes = {}
+
+    def origin_positions(self):
+        return {spike["origin"] for spike in self.spikes.values()}
 
     def generate_spikes(self, grid):
         self.spikes.clear()
@@ -473,6 +664,17 @@ class SpikeSystem:
 class FireballSystem:
     def __init__(self):
         self.fireballs = []
+
+    def anchor_positions(self):
+        anchors = set()
+        for fb in self.fireballs:
+            if fb.get("vertical"):
+                anchors.add((fb["x"], int(fb.get("start_y", fb["y"]))))
+                anchors.add((fb["x"], int(fb.get("end_y", fb["y"]))))
+            else:
+                anchors.add((int(fb.get("start_x", fb["x"])), fb["y"]))
+                anchors.add((int(fb.get("end_x", fb["x"])), fb["y"]))
+        return anchors
 
     def generate_fireballs(self, grid):
         self.fireballs.clear()
@@ -618,7 +820,7 @@ class FireballSystem:
 # ==========================================================
 
 class Player:
-    def __init__(self, start, level=1, score=0, collected=None, lives=5):
+    def __init__(self, start, level=1, score=0, collected=None, lives=5, health=MAX_HEALTH):
         self.x, self.y = int(start[0]), int(start[1])
         self.last_safe_x, self.last_safe_y = self.x, self.y
         self.score = score
@@ -627,22 +829,52 @@ class Player:
         self.move_delay = 140
         self.last_move_time = 0
         self.level = level
+        self.current_health = max(0, min(MAX_HEALTH, int(health)))
 
-        default_collected = {
-            3: 0,
-            4: 0,
-            6: 0,
-            7: 0,
-            8: 0
-        }
+        default_collected = make_empty_collected()
         if collected:
             default_collected.update(collected)
         self.collected = default_collected
 
     @property
     def health(self):
-        """Health is 50% of score, capped at 100k"""
-        return min(100000, int(self.score * 0.5))
+        return int(self.current_health)
+
+    def restore_full_health(self):
+        self.current_health = MAX_HEALTH
+
+    def change_health(self, delta):
+        self.current_health = max(0, min(MAX_HEALTH, int(self.current_health + delta)))
+        return self.current_health
+
+    def take_damage(self, amount):
+        if amount <= 0:
+            return self.health
+        return self.change_health(-math.ceil(amount))
+
+    def add_points(self, points):
+        old_score = self.score
+        projected_score = self.score + points
+        extra_lives = 0
+        lost_life_to_poison = False
+
+        if points >= 0:
+            self.score = projected_score
+            self.change_health(score_to_health_amount(points))
+            old_threshold = old_score // EXTRA_LIFE_THRESHOLD
+            new_threshold = self.score // EXTRA_LIFE_THRESHOLD
+            extra_lives = max(0, new_threshold - old_threshold)
+            if extra_lives:
+                self.lives += extra_lives
+        else:
+            self.score = max(0, projected_score)
+            self.take_damage(score_to_health_amount(abs(points)))
+            lost_life_to_poison = projected_score < 0
+
+        return {
+            "extra_lives": extra_lives,
+            "lost_life_to_poison": lost_life_to_poison,
+        }
 
     def move(self, dx, dy, grid):
         now = pygame.time.get_ticks()
@@ -672,45 +904,31 @@ class Player:
             return "TRAP_DEATH"
 
         if tile in ITEM_TYPES:
-            old_score = self.score
-            self.score += ITEM_TYPES[tile]["points"]
-            
-            # Check if score went negative (from poison) - lose a life
-            if self.score < 0:
-                self.score = 0
-                self.lives -= 1
-                persistent_lives = self.lives
-                self.collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
-                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
+            pickup_result = self.add_points(ITEM_TYPES[tile]["points"])
+            self.collected[tile] = self.collected.get(tile, 0) + 1
+
+            if pickup_result["extra_lives"]:
+                if SND_EXTRA_LIFE:
+                    SND_EXTRA_LIFE.play()
                 particles.add_burst(
                     self.x * TILE_SIZE + TILE_SIZE // 2,
                     self.y * TILE_SIZE + TILE_SIZE // 2,
-                    color=(255, 0, 0)
+                    color=(0, 255, 255)
                 )
-                if self.lives <= 0:
-                    self.dead = True
-                    return "NEGATIVE_DEATH"
-            else:
-                # Check for extra life every 250k points
-                old_lives_threshold = old_score // EXTRA_LIFE_THRESHOLD
-                new_lives_threshold = self.score // EXTRA_LIFE_THRESHOLD
-                if new_lives_threshold > old_lives_threshold:
-                    self.lives += 1
-                    persistent_lives = self.lives
-                    # Play extra life sound
-                    if SND_EXTRA_LIFE:
-                        SND_EXTRA_LIFE.play()
-                    # Show extra life message
-                    particles.add_burst(
-                        self.x * TILE_SIZE + TILE_SIZE // 2,
-                        self.y * TILE_SIZE + TILE_SIZE // 2,
-                        color=(0, 255, 255)
-                    )
-            
-            self.collected[tile] += 1
+
             if SND_PICKUP:
                 SND_PICKUP.play()
             grid[ny][nx] = FLOOR
+
+            if pickup_result["lost_life_to_poison"]:
+                self.x, self.y = nx, ny
+                self.last_safe_x, self.last_safe_y = nx, ny
+                particles.add_burst(
+                    nx * TILE_SIZE + TILE_SIZE // 2,
+                    ny * TILE_SIZE + TILE_SIZE // 2,
+                    color=(255, 0, 0)
+                )
+                return "NEGATIVE_DEATH"
 
         if tile == GOAL:
             return "NEXT"
@@ -760,7 +978,7 @@ def draw_minimap(grid, player):
     scale = 200 / WORLD_COLS
     for y in range(WORLD_ROWS):
         for x in range(WORLD_COLS):
-            if grid[y][x] == FLOOR:
+            if grid[y][x] in (FLOOR, TNT):
                 pygame.draw.rect(mini, (90, 90, 90), (x * scale, y * scale, 2, 2))
     pygame.draw.rect(mini, (255, 0, 0), (player.x * scale, player.y * scale, 4, 4))
     screen.blit(mini, (SCREEN_WIDTH - 210, 10))
@@ -777,7 +995,7 @@ def draw_world_scene():
 
             tile = grid[y][x]
 
-            if tile == FLOOR or tile in ITEM_TYPES or tile == GOAL or tile == TRAP:
+            if tile == FLOOR or tile in ITEM_TYPES or tile == GOAL or tile == TRAP or tile == TNT:
                 if SPRITES.get(FLOOR):
                     screen.blit(SPRITES[FLOOR], rect)
                 else:
@@ -788,6 +1006,8 @@ def draw_world_scene():
                     screen.blit(SPRITES[TRAP], rect)
                 else:
                     pygame.draw.rect(screen, (50, 50, 60), rect)
+            elif tile == TNT:
+                tnt_system.draw_tile(x, y, rect)
 
             if tile in ITEM_TYPES and ITEM_TYPES[tile].get("image"):
                 img = ITEM_TYPES[tile]["image"]
@@ -1074,7 +1294,7 @@ def draw_message_screen(message, color=COLOR_RED, msg_type="life_loss"):
     # Select background based on message type
     if msg_type == "fall":
         bg_list = FALL_BACKGROUNDS
-    if msg_type == "life_loss":
+    else:
         bg_list = LIFE_LOSS_BACKGROUNDS
     
     # Pick one background when message starts and keep it
@@ -1100,6 +1320,44 @@ def draw_message_screen(message, color=COLOR_RED, msg_type="life_loss"):
         lives_msg = font.render(f"Lives remaining: {player.lives}", True, COLOR_RED)
         screen.blit(lives_msg, (SCREEN_WIDTH // 2 - lives_msg.get_width() // 2, SCREEN_HEIGHT // 2 + 40))
 
+def sync_persistent_from_player():
+    global persistent_score, persistent_lives, persistent_health, persistent_collected
+    if player is None:
+        return
+
+    persistent_score = player.score
+    persistent_lives = player.lives
+    persistent_health = player.health
+    persistent_collected = player.collected.copy()
+
+def reset_run_progress(level=1, lives=5):
+    global persistent_level, persistent_score, persistent_lives, persistent_health, persistent_collected
+    persistent_level = level
+    persistent_score = 0
+    persistent_lives = lives
+    persistent_health = MAX_HEALTH
+    persistent_collected = make_empty_collected()
+
+def lose_life(reset_score=True, refill_health=True):
+    player.lives -= 1
+    if reset_score:
+        player.score = 0
+        player.collected = make_empty_collected()
+    if refill_health:
+        player.restore_full_health()
+    sync_persistent_from_player()
+    return player.lives <= 0
+
+def show_message(text, msg_kind="life_loss"):
+    global state, message_text, message_type, message_start_time
+    global message_bg_initialized, current_message_bg_img
+    message_text = text
+    message_type = msg_kind
+    message_start_time = pygame.time.get_ticks()
+    current_message_bg_img = None
+    message_bg_initialized = False
+    state = STATE_MESSAGE
+
 # ==========================================================
 # GAME STATES
 # ==========================================================
@@ -1117,6 +1375,7 @@ grid = None
 player = None
 spike_system = SpikeSystem()
 fireball_system = FireballSystem()
+tnt_system = TNTSystem()
 particles = ParticleSystem()
 last_time = pygame.time.get_ticks()
 last_level_score = 0
@@ -1137,7 +1396,8 @@ message_duration = 1500
 persistent_level = 1
 persistent_score = 0
 persistent_lives = 5
-persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0}
+persistent_health = MAX_HEALTH
+persistent_collected = make_empty_collected()
 
 # ==========================================================
 # SPLASH SCREEN
@@ -1223,7 +1483,7 @@ def find_safe_spawn(grid, candidate_x, candidate_y):
 
 def start_level(level_number):
     global grid, player, last_level_score, current_narrative
-    global persistent_score, persistent_collected, persistent_lives
+    global persistent_score, persistent_collected, persistent_lives, persistent_health
 
     grid, suggested_start = generate_world()
     safe_x, safe_y = find_safe_spawn(grid, suggested_start[0], suggested_start[1])
@@ -1233,7 +1493,8 @@ def start_level(level_number):
         level=level_number,
         score=persistent_score,
         collected=persistent_collected.copy(),
-        lives=persistent_lives
+        lives=persistent_lives,
+        health=persistent_health
     )
 
     place_items(grid)
@@ -1248,6 +1509,8 @@ def start_level(level_number):
             break
 
     place_traps(grid, (safe_x, safe_y), goal_pos or (WORLD_COLS // 2, WORLD_ROWS // 2))
+    place_tnt(grid, (safe_x, safe_y), goal_pos or (WORLD_COLS // 2, WORLD_ROWS // 2))
+    tnt_system.rebuild(grid)
     spike_system.generate_spikes(grid)
     fireball_system.generate_fireballs(grid)
     particles.particles.clear()
@@ -1277,10 +1540,7 @@ while True:
                 sys.exit()
 
             if state == STATE_SPLASH:
-                persistent_level = 1
-                persistent_score = 0
-                persistent_lives = 5
-                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
+                reset_run_progress()
                 current_narrative = get_narrative_for_level(persistent_level, narratives)
                 choose_narrative_background()
                 state = STATE_NARRATIVE
@@ -1296,10 +1556,7 @@ while True:
                 state = STATE_PLAY
 
             elif state == STATE_GAMEOVER:
-                persistent_level = 1
-                persistent_score = 0
-                persistent_lives = 5
-                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
+                reset_run_progress()
                 state = STATE_SPLASH
 
     if state == STATE_SPLASH:
@@ -1316,27 +1573,21 @@ while True:
         if fireball_hit and not player.dead:
             # Fireball hit deals damage
             player.score = max(0, player.score - FIREBALL_DAMAGE)
+            player.take_damage(score_to_health_amount(FIREBALL_DAMAGE))
             # Check if health dropped to 0 or below (lose a life)
             if player.health <= 0:
-                player.lives -= 1
-                persistent_lives = player.lives
-                player.score = 0
-                player.collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
-                persistent_score = 0
-                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
+                out_of_lives = lose_life()
                 particles.add_burst(
                     player.x * TILE_SIZE + TILE_SIZE // 2,
                     player.y * TILE_SIZE + TILE_SIZE // 2,
                     color=(255, 0, 0)
                 )
-                if player.lives <= 0:
+                if out_of_lives:
                     save_score(persistent_score)
                     state = STATE_GAMEOVER
                 else:
-                    message_text = "You lost a life!"
-                    message_type = "life_loss"
-                    message_start_time = pygame.time.get_ticks()
-                    state = STATE_MESSAGE
+                    show_message("You lost a life!")
+                continue
 
         keys = pygame.key.get_pressed()
         dx = dy = 0
@@ -1350,6 +1601,7 @@ while True:
             dy = 1
 
         result = player.move(dx, dy, grid)
+        persistent_lives = player.lives
 
         if result == "TRAP_DEATH":
             death_type = "trap"
@@ -1361,35 +1613,34 @@ while True:
                 player.x = player.last_safe_x
                 player.y = player.last_safe_y
                 # Show "you climbed out" message using message screen
-                message_text = "You climbed out!"
-                message_type = "fall"
-                message_start_time = pygame.time.get_ticks()
-                message_bg_initialized = False  # Reset background for new message
-                state = STATE_MESSAGE
+                show_message("You climbed out!", "fall")
             else:
                 # Player couldn't climb out - lose a life
-                player.lives -= 1
-                persistent_lives = player.lives
-                
-                # Lost a life - reset score and items, keep level progression
-                player.score = 0
-                player.collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
-                persistent_score = 0
-                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
-                
-                # Show "You lost a life!" message
-                message_text = "You lost a life!"
-                message_type = "life_loss"
-                message_start_time = pygame.time.get_ticks()
-                message_bg_initialized = False  # Reset background for new message
-                
+                out_of_lives = lose_life()
                 # Check if out of lives
-                if player.lives <= 0:
+                if out_of_lives:
                     fall_start_time = pygame.time.get_ticks()
                     state = STATE_FALLING
                 else:
-                    state = STATE_MESSAGE
+                    show_message("You lost a life!")
             continue
+
+        tnt_damage = tnt_system.update(delta_time, player, grid, particles, spike_system, fireball_system)
+        if tnt_damage:
+            player.take_damage(tnt_damage)
+            if player.health <= 0:
+                out_of_lives = lose_life()
+                particles.add_burst(
+                    player.x * TILE_SIZE + TILE_SIZE // 2,
+                    player.y * TILE_SIZE + TILE_SIZE // 2,
+                    color=(255, 150, 50)
+                )
+                if out_of_lives:
+                    save_score(persistent_score)
+                    state = STATE_GAMEOVER
+                else:
+                    show_message("You lost a life!")
+                continue
 
         if player.dead:
             if SND_SPIKE_HIT:
@@ -1398,37 +1649,26 @@ while True:
                 SND_SPIKE.play()
             # Spike hit deals damage instead of instant death
             player.score = max(0, player.score - SPIKE_DAMAGE)
+            player.take_damage(score_to_health_amount(SPIKE_DAMAGE))
             player.dead = False  # Reset dead flag
             # Check if health dropped to 0 or below (lose a life)
             if player.health <= 0:
-                player.lives -= 1
-                persistent_lives = player.lives
-                # Lost a life - reset score and items, keep level progression
-                player.score = 0
-                player.collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
-                persistent_score = 0
-                persistent_collected = {3: 0, 4: 0, 6: 0, 7: 0, 8: 0, 90: 0, 100: 0, 110: 0, 120: 0, 130: 0}
+                out_of_lives = lose_life()
                 particles.add_burst(
                     player.x * TILE_SIZE + TILE_SIZE // 2,
                     player.y * TILE_SIZE + TILE_SIZE // 2,
                     color=(255, 0, 0)
                 )
                 # Check if out of lives
-                if player.lives <= 0:
+                if out_of_lives:
                     save_score(persistent_score)
                     state = STATE_GAMEOVER
                 else:
-                    # Show message screen
-                    message_text = "You lost a life!"
-                    message_type = "life_loss"
-                    message_start_time = pygame.time.get_ticks()
-                    message_bg_initialized = False  # Reset background for new message
-                    state = STATE_MESSAGE
+                    show_message("You lost a life!")
             continue
 
         if result == "NEXT":
-            persistent_score = player.score
-            persistent_collected = player.collected.copy()
+            sync_persistent_from_player()
             if SND_WIN:
                 SND_WIN.play()
             state = STATE_SUMMARY
@@ -1436,15 +1676,12 @@ while True:
 
         if result == "NEGATIVE_DEATH":
             # Score went negative (poison) - show message, game over if out of lives
-            if player.lives <= 0:
+            out_of_lives = lose_life()
+            if out_of_lives:
                 save_score(player.score)
                 state = STATE_GAMEOVER
             else:
-                message_text = "You lost a life!"
-                message_type = "life_loss"
-                message_start_time = pygame.time.get_ticks()
-                message_bg_initialized = False  # Reset background for new message
-                state = STATE_MESSAGE
+                show_message("You lost a life!")
             continue
 
         draw_world_scene()
