@@ -1,4 +1,4 @@
-<html lang="en-us"><script src="https://pygame-web.github.io/archives/0.9/pythons.js" type=module id="site" data-python="python3.12" data-lines="50" data-columns="132" data-console="25" data-os="vtx,snd,gui" async defer>#<!--
+<html lang="en-us"><script>window.__loader_log_buffer = []; window.loader_log = function (message) { window.__loader_log_buffer.push(String(message)); };</script><script src="https://pygame-web.github.io/archives/0.9/pythons.js" type=module id="site" data-python="python3.12" data-lines="50" data-columns="132" data-console="25" data-os="vtx,snd,gui,fs" async defer>#<!--
 
 print("""
 Loading browser_app from browser_app.apk
@@ -21,10 +21,11 @@ from pathlib import Path
 
 
 def loader_log(message):
+    text = str(message)
     try:
-        platform.window.loader_log(str(message))
+        platform.window.loader_log(text)
     except Exception:
-        print(message)
+        print(text)
 
 
 async def custom_site():
@@ -173,6 +174,12 @@ window.config = config
     }
 
     window.loader_log = appendLoader
+    if (window.__loader_log_buffer && window.__loader_log_buffer.length) {
+        for (const message of window.__loader_log_buffer) {
+            appendLoader(message)
+        }
+        window.__loader_log_buffer = []
+    }
 
     function mirrorConsole(methodName) {
         const original = console[methodName]
