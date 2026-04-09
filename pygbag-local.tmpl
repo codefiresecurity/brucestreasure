@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{cookiecutter.title}}</title>
+    <link rel="icon" href="favicon.png" type="image/png">
+    <style>
+        :root {
+            color-scheme: dark;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background:
+                radial-gradient(circle at top, rgba(103, 153, 255, 0.24), transparent 34%),
+                linear-gradient(180deg, #111722 0%, #070a12 100%);
+            color: #e9eefc;
+            font: 14px/1.45 monospace;
+        }
+
+        #loader-shell {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            width: min(460px, calc(100vw - 24px));
+            max-height: calc(100vh - 24px);
+            overflow: auto;
+            padding: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 14px;
+            background: rgba(4, 7, 14, 0.84);
+            box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(10px);
+            z-index: 99999;
+        }
+
+        #loader-title {
+            margin: 0 0 10px;
+            font-size: 16px;
+            color: #fff2a8;
+        }
+
+        #status {
+            margin: 0 0 8px;
+            color: #e8f0ff;
+        }
+
+        #progress {
+            width: 100%;
+            height: 10px;
+            margin: 0 0 10px;
+        }
+
+        #loader-log {
+            min-height: 120px;
+            margin: 0;
+            white-space: pre-wrap;
+            color: #bfecc7;
+        }
+
+        #spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            margin-right: 8px;
+            border: 2px solid rgba(255, 255, 255, 0.18);
+            border-top-color: #7acbff;
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+    <script>
+        window.config = {
+            archive: "{{cookiecutter.archive}}.apk",
+            cdn: "{{cookiecutter.cdn}}",
+            python: "python{{cookiecutter.PYBUILD}}",
+            width: {{cookiecutter.width}},
+            height: {{cookiecutter.height}},
+            columns: {{cookiecutter.COLUMNS}},
+            lines: {{cookiecutter.LINES}},
+            console: {{cookiecutter.CONSOLE}},
+            ume_block: {{cookiecutter.ume_block}},
+            can_close: {{cookiecutter.can_close}},
+            autorun: 1
+        };
+
+        (function () {
+            const pythonDigits = "{{cookiecutter.PYBUILD}}".replace(".", "");
+            const expectedRuntime = "{{cookiecutter.cdn}}cpython" + pythonDigits + "/main.js";
+            const logBuffer = [];
+            let lastStatus = "";
+            let heartbeatSeconds = 0;
+
+            function stamp() {
+                return new Date().toLocaleTimeString([], { hour12: false });
+            }
+
+            function flushLog() {
+                const logNode = document.getElementById("loader-log");
+                if (!logNode || !logBuffer.length) {
+                    return;
+                }
+
+                logNode.textContent += logBuffer.join("");
+                logBuffer.length = 0;
+                logNode.scrollTop = logNode.scrollHeight;
+            }
+
+            function log(message) {
+                logBuffer.push("[" + stamp() + "] " + message + "\n");
+                flushLog();
+            }
+
+            function mirrorStatus() {
+                const statusNode = document.getElementById("status");
+                if (!statusNode) {
+                    return;
+                }
+
+                const text = (statusNode.textContent || "").trim();
+                if (text && text !== lastStatus) {
+                    lastStatus = text;
+                    log("status: " + text);
+                }
+            }
+
+            const nativeFetch = window.fetch ? window.fetch.bind(window) : null;
+            if (nativeFetch) {
+                window.fetch = function (...args) {
+                    const resource = args[0];
+                    const url = typeof resource === "string" ? resource : (resource && resource.url) || "";
+                    if (url) {
+                        log("fetching: " + url);
+                    }
+
+                    return nativeFetch(...args).then((response) => {
+                        if (url) {
+                            log("fetched " + response.status + ": " + url);
+                        }
+                        return response;
+                    }).catch((error) => {
+                        if (url) {
+                            log("fetch failed: " + url + " (" + error + ")");
+                        }
+                        throw error;
+                    });
+                };
+            }
+
+            window.addEventListener("error", function (event) {
+                const target = event.target;
+                if (target && target.src) {
+                    log("resource error: " + target.src);
+                    return;
+                }
+
+                if (event.message) {
+                    log("error: " + event.message);
+                }
+            }, true);
+
+            window.addEventListener("DOMContentLoaded", function () {
+                log("Loader page ready.");
+                log("Expecting runtime: " + expectedRuntime);
+                log("Expecting archive: {{cookiecutter.archive}}.apk");
+
+                const statusNode = document.getElementById("status");
+                if (statusNode) {
+                    statusNode.textContent = "Preparing loader...";
+                }
+
+                const statusObserver = new MutationObserver(mirrorStatus);
+                if (statusNode) {
+                    statusObserver.observe(statusNode, {
+                        childList: true,
+                        characterData: true,
+                        subtree: true
+                    });
+                }
+
+                window.setInterval(function () {
+                    heartbeatSeconds += 2;
+                    mirrorStatus();
+
+                    if (window.python || document.querySelector("canvas")) {
+                        log("Runtime looks ready.");
+                        const shell = document.getElementById("loader-shell");
+                        window.setTimeout(function () {
+                            if (shell) {
+                                shell.style.display = "none";
+                            }
+                        }, 2500);
+                        return;
+                    }
+
+                    log("Still loading... " + heartbeatSeconds + "s elapsed.");
+                }, 2000);
+            });
+        })();
+    </script>
+</head>
+<body>
+    <div id="loader-shell">
+        <h1 id="loader-title">{{cookiecutter.title}} Browser Loader</h1>
+        <div><span id="spinner"></span><span id="status">Waiting for startup...</span></div>
+        <progress id="progress" max="100" value="0"></progress>
+        <pre id="loader-log"></pre>
+    </div>
+    <script
+        src="{{cookiecutter.cdn}}pythons.js"
+        data-os="vtx,fs,gui"
+        data-python="python{{cookiecutter.PYBUILD}}"
+        data-columns="{{cookiecutter.COLUMNS}}"
+        data-lines="{{cookiecutter.LINES}}"
+        data-console="{{cookiecutter.CONSOLE}}"
+        type="module"
+        id="__main__"
+        async
+        defer>
+# Browser runtime uses the packaged {{cookiecutter.archive}}.apk archive.
+    </script>
+</body>
+</html>

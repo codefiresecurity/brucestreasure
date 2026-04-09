@@ -14,4 +14,4 @@ cp "$ROOT_DIR/highscores.txt" "$BUILD_DIR/highscores.txt"
 cp -R "$ROOT_DIR/assets" "$BUILD_DIR/assets"
 
 echo "Prepared browser app in: $BUILD_DIR"
-echo "Next step: python -m pygbag --disable-sound-format-error $BUILD_DIR"
+echo "Next step: ./build_pages.sh"
