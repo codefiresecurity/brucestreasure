@@ -29,6 +29,20 @@ cp "$WEB_DIR/browser_app.tar.gz" "$DOCS_DIR/browser_app.tar.gz"
 cp "$WEB_DIR/favicon.png" "$DOCS_DIR/favicon.png"
 cp "$WEB_DIR/favicon.png" "$DOCS_DIR/favicon.ico"
 
+cat > "$DOCS_DIR/browser_app.html" <<'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="0; url=/">
+  <title>Redirecting</title>
+</head>
+<body>
+  <p>Redirecting to <a href="/">/</a>...</p>
+</body>
+</html>
+EOF
+
 echo "Built browser site:"
 echo "  $DOCS_DIR/index.html"
 echo "  $DOCS_DIR/browser_app.apk"

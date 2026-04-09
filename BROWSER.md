@@ -27,6 +27,14 @@ docs/favicon.ico
 
 The build uses a local `pygbag-local.tmpl` page that explicitly asks for `python3.12`, loads the packaged `browser_app.apk`, and shows a small on-page loader log while the runtime downloads resources.
 
+Open the site root after starting your local server:
+
+```text
+http://127.0.0.1:8000/
+```
+
+Do not open `/browser_app.html`; that was only used by the older broken embed build.
+
 You can test it locally with:
 
 ```bash
