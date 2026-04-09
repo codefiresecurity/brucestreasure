@@ -9,6 +9,7 @@ TEMPLATE="$ROOT_DIR/pygbag-local.tmpl"
 PYGBAG_RUNTIME_VERSION="0.9.2"
 PYGBAG_RUNTIME_CDN="https://pygame-web.github.io/archives/0.9/"
 PYGBAG_PYBUILD="3.12"
+LOCAL_ICON="$ROOT_DIR/assets/tnt.png"
 
 "$ROOT_DIR/prepare_browser_build.sh"
 rm -rf "$APP_DIR/build"
@@ -19,6 +20,7 @@ python -m pygbag \
   --version "$PYGBAG_RUNTIME_VERSION" \
   --PYBUILD "$PYGBAG_PYBUILD" \
   --cdn "$PYGBAG_RUNTIME_CDN" \
+  --icon "$LOCAL_ICON" \
   --template "$TEMPLATE" \
   "$APP_DIR"
 

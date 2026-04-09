@@ -1,30 +1,305 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="en-us"><script src="{{cookiecutter.cdn}}pythons.js" type=module id="site" data-python="python{{cookiecutter.PYBUILD}}" data-lines="{{cookiecutter.LINES}}" data-columns="{{cookiecutter.COLUMNS}}" data-console="{{cookiecutter.CONSOLE}}" data-os="vtx,snd,gui" async defer>#<!--
+
+print("""
+Loading {{cookiecutter.title}} from {{cookiecutter.archive}}.apk
+    Pygbag Version : {{cookiecutter.version}}
+    Template Version : local-debug-1
+    Python  : {{cookiecutter.PYBUILD}}
+    CDN URL : {{cookiecutter.cdn}}
+    Screen  : {{cookiecutter.width}}x{{cookiecutter.height}}
+    Title   : {{cookiecutter.title}}
+    Folder  : {{cookiecutter.directory}}
+    Authors : {{cookiecutter.authors}}
+    SPDX-License-Identifier: {{cookiecutter.spdx}}
+
+""")
+
+import sys
+import asyncio
+import platform
+from pathlib import Path
+
+
+def loader_log(message):
+    try:
+        platform.window.loader_log(str(message))
+    except Exception:
+        print(message)
+
+
+async def custom_site():
+    import embed
+
+    loader_log("Python bootstrap started.")
+    platform.document.body.style.background = "#09111d"
+    platform.window.canvas.style.visibility = "visible"
+
+    bundle = "{{cookiecutter.archive}}"
+    appdir = Path(f"/data/data/{bundle}")
+    appdir.mkdir()
+
+    try:
+        loader_log(f"Preparing archive workspace: {appdir}")
+
+        if platform.window.location.host.find(".itch.zone") > 0:
+            import zipfile
+
+            loader_log(f"Opening {bundle}.apk")
+            async with platform.fopen(f"{bundle}.apk", "rb") as archive:
+                loader_log("Extracting APK archive...")
+                with zipfile.ZipFile(archive) as zip_ref:
+                    zip_ref.extractall(appdir.as_posix())
+        else:
+            import tarfile
+
+            loader_log(f"Opening {bundle}.tar.gz")
+            async with platform.fopen(f"{bundle}.tar.gz", "rb") as archive:
+                loader_log("Extracting tar archive...")
+                tar = tarfile.open(fileobj=archive, mode="r:gz")
+                tar.extractall(path=appdir.as_posix(), filter="tar")
+                tar.close()
+
+        loader_log("Archive extracted. Preparing runtime...")
+        platform.run_main(PyConfig, loaderhome=appdir / "assets", loadermain=None)
+
+        while embed.counter() < 0:
+            await asyncio.sleep(.1)
+
+        main = appdir / "assets" / "main.py"
+        loader_log(f"Resolved entrypoint: {main}")
+
+        if not platform.window.MM.UME:
+            __import__(__name__).__file__ = main
+            msg = "Ready to start. Click or tap the page to enable audio."
+            platform.window.infobox.innerText = msg
+            loader_log(msg)
+
+            while not platform.window.MM.UME:
+                await asyncio.sleep(.1)
+
+        loader_log("Starting async runtime...")
+        await TopLevel_async_handler.start_toplevel(platform.shell, console=window.python.config.debug)
+
+        __import__(__name__).__file__ = main
+
+        def ui_callback(pkg):
+            notice = f"installing {pkg}"
+            platform.window.infobox.innerText = notice
+            loader_log(notice)
+
+        loader_log("Launching main.py")
+        await shell.source(main, callback=ui_callback)
+
+        platform.window.infobox.style.display = "none"
+        platform.window.config.gui_divider = 1
+        platform.window.window_resize()
+        platform.window.transfer.hidden = true
+        loader_log("Main game script loaded.")
+        print("pygbag-local.tmpl: done")
+        shell.interactive()
+
+    except Exception as exc:
+        loader_log(f"Bootstrap failed: {exc}")
+        raise
+
+
+asyncio.run(custom_site())
+
+
+# BEGIN BLOCK
+#
+# now this is the html part you can (and should) customize
+# It is not mandatory : pygame-script when it reads the first line (also called
+# shebang ) of above code create absolute minimal widget set
+# required for running with default rules
+#
+# do not alter that comment block it is separating python code from html code
+# =============================================================================
+# --></script><head><!--
+--><script type="application/javascript">
+
+config = {
+    xtermjs : "{{cookiecutter.xtermjs}}",
+    _sdl2 : "canvas",
+    user_canvas : 0,
+    user_canvas_managed : 0,
+    gui_divider : 2,
+    ume_block : {{cookiecutter.ume_block}},
+    can_close : {{cookiecutter.can_close}},
+    archive : "{{cookiecutter.archive}}",
+    gui_debug : 2,
+    cdn : "{{cookiecutter.cdn}}",
+    autorun : {{cookiecutter.autorun}},
+    PYBUILD : "{{cookiecutter.PYBUILD}}",
+    fb_ar : 1.77,
+    fb_width : "{{cookiecutter.width}}",
+    fb_height : "{{cookiecutter.height}}"
+}
+
+window.config = config
+
+(function () {
+    const pythonDigits = "{{cookiecutter.PYBUILD}}".replace(".", "")
+    const expectedRuntime = "{{cookiecutter.cdn}}cpython" + pythonDigits + "/main.js"
+    const buffer = []
+    let lastLine = ""
+    let heartbeatSeconds = 0
+    let consoleMirrored = false
+
+    function stamp() {
+        return new Date().toLocaleTimeString([], { hour12: false })
+    }
+
+    function flushLoader() {
+        const node = document.getElementById("loader-log")
+        if (!node || !buffer.length) {
+            return
+        }
+
+        node.textContent += buffer.join("")
+        buffer.length = 0
+        node.scrollTop = node.scrollHeight
+    }
+
+    function appendLoader(message) {
+        const line = "[" + stamp() + "] " + message
+        if (line === lastLine) {
+            return
+        }
+
+        lastLine = line
+        buffer.push(line + "\n")
+        flushLoader()
+    }
+
+    window.loader_log = appendLoader
+
+    function mirrorConsole(methodName) {
+        const original = console[methodName]
+        console[methodName] = function (...args) {
+            try {
+                const text = args.map((item) => {
+                    if (typeof item === "string") {
+                        return item
+                    }
+                    try {
+                        return JSON.stringify(item)
+                    } catch (error) {
+                        return String(item)
+                    }
+                }).join(" ")
+                appendLoader(methodName + ": " + text)
+            } catch (error) {
+                original.call(console, "loader mirror failed", error)
+            }
+            return original.apply(console, args)
+        }
+    }
+
+    function mirrorStatus() {
+        const statusNode = document.getElementById("status")
+        if (!statusNode) {
+            return
+        }
+
+        const text = (statusNode.textContent || "").trim()
+        if (text) {
+            appendLoader("status: " + text)
+        }
+    }
+
+    if (!consoleMirrored) {
+        consoleMirrored = true
+        mirrorConsole("log")
+        mirrorConsole("warn")
+        mirrorConsole("error")
+    }
+
+    window.addEventListener("error", function (event) {
+        const target = event.target
+        if (target && target.src) {
+            appendLoader("resource error: " + target.src)
+            return
+        }
+        if (event.message) {
+            appendLoader("error: " + event.message)
+        }
+    }, true)
+
+    window.addEventListener("unhandledrejection", function (event) {
+        if (event.reason) {
+            appendLoader("rejection: " + event.reason)
+        }
+    })
+
+    window.addEventListener("DOMContentLoaded", function () {
+        appendLoader("Loader page ready.")
+        appendLoader("Expecting runtime: " + expectedRuntime)
+        appendLoader("Expecting archive: {{cookiecutter.archive}}.tar.gz")
+
+        const statusNode = document.getElementById("status")
+        if (statusNode) {
+            const observer = new MutationObserver(mirrorStatus)
+            observer.observe(statusNode, {
+                childList: true,
+                characterData: true,
+                subtree: true
+            })
+        }
+
+        window.setInterval(function () {
+            heartbeatSeconds += 2
+            mirrorStatus()
+
+            if (window.python || document.querySelector("canvas")) {
+                appendLoader("Runtime heartbeat: canvas/runtime detected at " + heartbeatSeconds + "s.")
+                return
+            }
+
+            appendLoader("Still loading... " + heartbeatSeconds + "s elapsed.")
+        }, 2000)
+    })
+})()
+
+function show_infobox() {
+    infobox.style.display = "block"
+
+    const width = infobox.offsetWidth
+    const height = infobox.offsetHeight
+    const left = (window.innerWidth - width) / 2
+    const top = (window.innerHeight - height) / 2
+
+    infobox.style.left = left + "px"
+    infobox.style.top = top + "px"
+}
+
+</script>
+
     <title>{{cookiecutter.title}}</title>
-    <link rel="icon" href="favicon.png" type="image/png">
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="height=device-height, initial-scale=1.0">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes"/>
+
+    <link rel="icon" type="image/png" href="favicon.png" sizes="16x16">
+
     <style>
         :root {
             color-scheme: dark;
         }
 
-        * {
-            box-sizing: border-box;
-        }
-
         body {
             margin: 0;
-            min-height: 100vh;
+            font-family: monospace;
             background:
-                radial-gradient(circle at top, rgba(103, 153, 255, 0.24), transparent 34%),
+                radial-gradient(circle at top, rgba(103, 153, 255, 0.22), transparent 36%),
                 linear-gradient(180deg, #111722 0%, #070a12 100%);
             color: #e9eefc;
-            font: 14px/1.45 monospace;
         }
 
-        #loader-shell {
+        #transfer {
             position: fixed;
             top: 12px;
             left: 12px;
@@ -38,17 +313,14 @@
             box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
             backdrop-filter: blur(10px);
             z-index: 99999;
-        }
-
-        #loader-title {
-            margin: 0 0 10px;
-            font-size: 16px;
-            color: #fff2a8;
+            text-align: left;
         }
 
         #status {
-            margin: 0 0 8px;
-            color: #e8f0ff;
+            display: inline-block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #fff2a8;
         }
 
         #progress {
@@ -64,173 +336,199 @@
             color: #bfecc7;
         }
 
-        #spinner {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            margin-right: 8px;
-            border: 2px solid rgba(255, 255, 255, 0.18);
-            border-top-color: #7acbff;
-            border-radius: 50%;
-            animation: spin 0.9s linear infinite;
-            vertical-align: middle;
+        #infobox {
+            position: fixed;
+            background: rgba(10, 32, 16, 0.92);
+            color: #dff9e1;
+            font-weight: bold;
+            padding: 12px 24px;
+            border: 1px solid rgba(180, 255, 180, 0.22);
+            border-radius: 12px;
+            z-index: 999999;
         }
 
-        @keyframes spin {
-            to {
-                transform: rotate(360deg);
-            }
+        div.emscripten {
+            text-align: center;
+        }
+
+        div.emscripten_border {
+            border: 1px solid black;
+        }
+
+        canvas.emscripten {
+            border: 0;
+            background-color: transparent;
+            width: 100%;
+            height: 100%;
+            z-index: 5;
+            padding: 0;
+            margin: 0 auto;
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            right: 0;
+        }
+
+        .topright {
+            position: absolute;
+            top: 0;
+            right: 0;
+        }
+
+        .bottomright {
+            position: absolute;
+            top: 40%;
+            right: 0;
+        }
+
+        .trinfo {
+            position: relative;
+            right: 0;
+            border: 1px solid black;
+        }
+
+        .framed {
+            position: relative;
+            top: 150px;
+            right: 10px;
+            border: 1px solid black;
         }
     </style>
-    <script>
-        window.config = {
-            archive: "{{cookiecutter.archive}}.apk",
-            cdn: "{{cookiecutter.cdn}}",
-            python: "python{{cookiecutter.PYBUILD}}",
-            width: {{cookiecutter.width}},
-            height: {{cookiecutter.height}},
-            columns: {{cookiecutter.COLUMNS}},
-            lines: {{cookiecutter.LINES}},
-            console: {{cookiecutter.CONSOLE}},
-            ume_block: {{cookiecutter.ume_block}},
-            can_close: {{cookiecutter.can_close}},
-            autorun: 1
-        };
-
-        (function () {
-            const pythonDigits = "{{cookiecutter.PYBUILD}}".replace(".", "");
-            const expectedRuntime = "{{cookiecutter.cdn}}cpython" + pythonDigits + "/main.js";
-            const logBuffer = [];
-            let lastStatus = "";
-            let heartbeatSeconds = 0;
-
-            function stamp() {
-                return new Date().toLocaleTimeString([], { hour12: false });
-            }
-
-            function flushLog() {
-                const logNode = document.getElementById("loader-log");
-                if (!logNode || !logBuffer.length) {
-                    return;
-                }
-
-                logNode.textContent += logBuffer.join("");
-                logBuffer.length = 0;
-                logNode.scrollTop = logNode.scrollHeight;
-            }
-
-            function log(message) {
-                logBuffer.push("[" + stamp() + "] " + message + "\n");
-                flushLog();
-            }
-
-            function mirrorStatus() {
-                const statusNode = document.getElementById("status");
-                if (!statusNode) {
-                    return;
-                }
-
-                const text = (statusNode.textContent || "").trim();
-                if (text && text !== lastStatus) {
-                    lastStatus = text;
-                    log("status: " + text);
-                }
-            }
-
-            const nativeFetch = window.fetch ? window.fetch.bind(window) : null;
-            if (nativeFetch) {
-                window.fetch = function (...args) {
-                    const resource = args[0];
-                    const url = typeof resource === "string" ? resource : (resource && resource.url) || "";
-                    if (url) {
-                        log("fetching: " + url);
-                    }
-
-                    return nativeFetch(...args).then((response) => {
-                        if (url) {
-                            log("fetched " + response.status + ": " + url);
-                        }
-                        return response;
-                    }).catch((error) => {
-                        if (url) {
-                            log("fetch failed: " + url + " (" + error + ")");
-                        }
-                        throw error;
-                    });
-                };
-            }
-
-            window.addEventListener("error", function (event) {
-                const target = event.target;
-                if (target && target.src) {
-                    log("resource error: " + target.src);
-                    return;
-                }
-
-                if (event.message) {
-                    log("error: " + event.message);
-                }
-            }, true);
-
-            window.addEventListener("DOMContentLoaded", function () {
-                log("Loader page ready.");
-                log("Expecting runtime: " + expectedRuntime);
-                log("Expecting archive: {{cookiecutter.archive}}.apk");
-
-                const statusNode = document.getElementById("status");
-                if (statusNode) {
-                    statusNode.textContent = "Preparing loader...";
-                }
-
-                const statusObserver = new MutationObserver(mirrorStatus);
-                if (statusNode) {
-                    statusObserver.observe(statusNode, {
-                        childList: true,
-                        characterData: true,
-                        subtree: true
-                    });
-                }
-
-                window.setInterval(function () {
-                    heartbeatSeconds += 2;
-                    mirrorStatus();
-
-                    if (window.python || document.querySelector("canvas")) {
-                        log("Runtime looks ready.");
-                        const shell = document.getElementById("loader-shell");
-                        window.setTimeout(function () {
-                            if (shell) {
-                                shell.style.display = "none";
-                            }
-                        }, 2500);
-                        return;
-                    }
-
-                    log("Still loading... " + heartbeatSeconds + "s elapsed.");
-                }, 2000);
-            });
-        })();
-    </script>
 </head>
+
 <body>
-    <div id="loader-shell">
-        <h1 id="loader-title">{{cookiecutter.title}} Browser Loader</h1>
-        <div><span id="spinner"></span><span id="status">Waiting for startup...</span></div>
-        <progress id="progress" max="100" value="0"></progress>
+
+    <div id="transfer" align="center">
+        <div class="emscripten" id="status">Downloading...</div>
+        <div class="emscripten">
+            <progress value="0" max="100" id="progress"></progress>
+        </div>
         <pre id="loader-log"></pre>
     </div>
-    <script
-        src="{{cookiecutter.cdn}}pythons.js"
-        data-os="vtx,fs,gui"
-        data-python="python{{cookiecutter.PYBUILD}}"
-        data-columns="{{cookiecutter.COLUMNS}}"
-        data-lines="{{cookiecutter.LINES}}"
-        data-console="{{cookiecutter.CONSOLE}}"
-        type="module"
-        id="__main__"
-        async
-        defer>
-# Browser runtime uses the packaged {{cookiecutter.archive}}.apk archive.
+
+    <canvas class="emscripten" id="canvas"
+width="1px"
+height="1px"
+    oncontextmenu="event.preventDefault()" tabindex=1>
+    </canvas>
+
+    <canvas class="emscripten" id="canvas3d"
+width="{{cookiecutter.width}}px"
+height="{{cookiecutter.height}}px"
+    oncontextmenu="event.preventDefault()" tabindex=1 hidden>
+    </canvas>
+
+    <div id="infobox">Loading, please wait ...</div>
+
+    <div id="html"></div>
+
+    <div id="crt" class="bottomright">
+
+        <div id="system" hidden>
+            <div class="button-container">
+                <button id="aiostop" disabled>AIO Stop</button>
+                <button id="aiopaused_true" disabled>AIO Pause</button>
+                <button id="aiopaused_false" disabled>AIO Run</button>
+                <button id="pygame_mixer_music_pause" disabled>Music Pause</button>
+            </div>
+
+            <div class="button-container">
+                <div id="load_min">min</div>
+                <div id="load_avg">avg</div>
+                <div id="load_max">max</div>
+                <button id="load_rst" disabled>RESET</button>
+            </div>
+
+            <div id="level">(battery level unknown)</div>
+            <div id="stateBattery">(charging state unknown)</div>
+        </div>
+
+        <div id="box" class="emscripten_border" hidden=true>
+            <div id="info" class="trinfo"></div>
+
+            <iframe id="iframe" class="framed" name="iframe"
+width="470px" height="90%"
+allowtransparency="true"
+style="z-index: 10;"
+style="background: #FFFFFF;"
+frameborder="1"
+                allowfullscreen="true"
+                webkitallowfullscreen="true"
+                msallowfullscreen="true"
+                mozallowfullscreen="true"
+                sandbox="allow-same-origin allow-top-navigation allow-scripts allow-pointer-lock"
+                allow="autoplay; fullscreen *; geolocation; microphone; camera; midi; monetization; xr-spatial-tracking; gamepad; gyroscope; accelerometer; xr; cross-origin-isolated"
+                src="{{cookiecutter.cdn}}empty.html"
+                scrolling="yes">
+            </iframe>
+        </div>
+    </div>
+
+    <div id="dlg" hidden>
+        <input type="file" id="dlg_multifile" multiple accept="image/*">
+        <label for="dlg_multifile">Select files</label>
+    </div>
+
+    <div id="pyconsole">
+        <div id="terminal" tabindex=1 align="left"></div>
+    </div>
+
+    <script type="application/javascript">
+
+    globalThis.__canvas_resized = (self, ecw, ech) => {
+        console.warn("TODO: panda3d canvas monitor", self, ecw, ech)
+    }
+
+    async function custom_onload(debug_hidden) {
+        console.log("custom_onload")
+
+        pyconsole.hidden = debug_hidden
+        system.hidden = debug_hidden
+        info.hidden = debug_hidden
+        box.hidden = debug_hidden
+
+        show_infobox()
+        window.loader_log("custom_onload completed.")
+    }
+
+    function custom_prerun() {
+        console.log("custom_prerun")
+        window.loader_log("custom_prerun invoked.")
+    }
+
+    function custom_postrun() {
+        console.log("custom_postrun")
+        window.loader_log("custom_postrun invoked.")
+    }
+
+    function debug() {
+        python.config.debug = true
+        custom_onload(false)
+        Module.PyRun_SimpleString("shell.uptime()")
+        window_resize()
+    }
+
+    function info_inline(data) {
+        document.getElementById("info").innerHTML = data
+    }
+
+    function info_online(url) {
+        fetch(url)
+            .then((response) => response.text())
+            .then((html) => {
+                info_inline(html)
+            })
+            .catch((error) => {
+                console.warn(error)
+            })
+    }
+
+    function frame_online(url) {
+        window.frames["iframe"].location = url
+    }
+
     </script>
+
 </body>
 </html>
