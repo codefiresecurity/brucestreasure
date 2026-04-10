@@ -1421,49 +1421,51 @@ def load_full_sprite(name):
 PLAYER_BIG_SPRITE = None
 
 def draw_splash():
-    screen.fill((128, 128, 128))
-    
-    # Draw the player character on the left side
+    screen.fill((50, 50, 50))  # Dark background
+
+    # Left side: Big player sprite
     if PLAYER_BIG_SPRITE:
-        # Scale down the full resolution image to fit nicely on screen
-        # Original is 800x1280, scale to fit within a reasonable area
-        target_height = SCREEN_HEIGHT - 200  # Leave room for title and prompt
+        target_height = int(SCREEN_HEIGHT * 0.75)
         orig_w, orig_h = PLAYER_BIG_SPRITE.get_size()
         scale_factor = target_height / orig_h
         new_size = (int(orig_w * scale_factor), int(orig_h * scale_factor))
         scaled_player = pygame.transform.scale(PLAYER_BIG_SPRITE, new_size)
         
-        # Position on the left side
         player_x = SCREEN_WIDTH // 4 - scaled_player.get_width() // 2
         player_y = SCREEN_HEIGHT // 2 - scaled_player.get_height() // 2
         screen.blit(scaled_player, (player_x, player_y))
+
+    # Right side: Pre-rendered ASCII art
+    ascii_path = os.path.join(ASSET_PATH, "splash.png")
     
-    # Keep the ASCII art on the right side
-    ascii_title = [
-        "  ██████╗ ██████╗ ██╗   ██╗ ██████╗███████╗",
-        "  ██╔══██╗██╔══██╗██║   ██║██╔════╝██╔════╝",
-        "  ██████╔╝██████╔╝██║   ██║██║     █████╗  ",
-        "  ██╔══██╗██╔══██╗██║   ██║██║     ██╔══╝  ",
-        "  ██████╔╝██║  ██║╚██████╔╝╚██████╗███████╗",
-        "  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝╚══════╝",
-        "",
-        "v1.0",
-        "",
-        "BRUCE'S TREASURE",
-        "",
-        "> PRESS ANY KEY TO BEGIN <",
-    ]
+    if os.path.exists(ascii_path):
+        try:
+            ascii_img = pygame.image.load(ascii_path).convert_alpha()
+            
+            # Scale to fit nicely on the right side
+            max_width = SCREEN_WIDTH // 2 - 80
+            max_height = SCREEN_HEIGHT - 180
+            scale = min(max_width / ascii_img.get_width(), max_height / ascii_img.get_height())
+            new_size = (int(ascii_img.get_width() * scale), int(ascii_img.get_height() * scale))
+            ascii_img = pygame.transform.scale(ascii_img, new_size)
+            
+            # Position on the right
+            ascii_x = 3 * SCREEN_WIDTH // 4 - ascii_img.get_width() // 2
+            ascii_y = SCREEN_HEIGHT // 2 - ascii_img.get_height() // 2 + 20
+            screen.blit(ascii_img, (ascii_x, ascii_y))
+        except Exception as e:
+            print(f"Warning: Could not load splash_ascii.png: {e}")
+            # Fallback text if image fails
+            fallback = big_font.render("BRUCE'S TREASURE", True, (0, 255, 100))
+            screen.blit(fallback, (3 * SCREEN_WIDTH // 4 - fallback.get_width() // 2, SCREEN_HEIGHT // 2 - 100))
+    else:
+        # Fallback if image is missing
+        fallback = big_font.render("BRUCE'S TREASURE", True, (0, 255, 100))
+        screen.blit(fallback, (3 * SCREEN_WIDTH // 4 - fallback.get_width() // 2, SCREEN_HEIGHT // 2 - 100))
 
-    line_spacing = 35
-    total_height = len(ascii_title) * line_spacing
-    start_y = (SCREEN_HEIGHT // 2) - (total_height // 2)
-
-    for i, line in enumerate(ascii_title):
-        text = font.render(line, True, (0, 255, 0))
-        current_y = start_y + (i * line_spacing)
-        # Position on the right side
-        rect = text.get_rect(center=(3 * SCREEN_WIDTH // 4, current_y))
-        screen.blit(text, rect)
+    # Bottom prompt
+    prompt = font.render("PRESS ANY KEY TO BEGIN YOUR ADVENTURE", True, (100, 200, 255))
+    screen.blit(prompt, (SCREEN_WIDTH // 2 - prompt.get_width() // 2, SCREEN_HEIGHT - 90))
 
 def initialize_runtime(browser=False):
     global IS_BROWSER, screen, SCREEN_WIDTH, SCREEN_HEIGHT, VISIBLE_COLS, VISIBLE_ROWS

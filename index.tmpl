@@ -1,0 +1,222 @@
+<html lang="en-us">
+<script src="{{cookiecutter.cdn}}pythons.js" type=module id=site data-LINES={{cookiecutter.LINES}} data-CONSOLE={{cookiecutter.CONSOLE}} data-python=python{{cookiecutter.PYBUILD}} data-os=vtx,fs,snd,gui async defer>#<!--
+print("""
+Loading {{cookiecutter.title}} from {{cookiecutter.archive}}.apk
+    Pygbag Version : {{cookiecutter.version}}
+    Template Version : custom-nice-logger
+    Python : {{cookiecutter.PYBUILD}}
+    CDN URL : {{cookiecutter.cdn}}
+    Screen : {{cookiecutter.width}}x{{cookiecutter.height}}
+    Title : {{cookiecutter.title}}
+    Folder : {{cookiecutter.directory}}
+""")
+
+import sys
+import asyncio
+import platform
+from pathlib import Path
+import embed
+
+def loader_log(message):
+    text = str(message)
+    try:
+        platform.window.loader_log(text)
+    except Exception:
+        print(text)
+
+async def custom_site():
+    loader_log("Python bootstrap started.")
+    platform.document.body.style.background = "#09111d"
+    platform.window.canvas.style.visibility = "visible"
+
+    bundle = "{{cookiecutter.archive}}"
+    appdir = Path(f"/data/data/{bundle}")
+    appdir.mkdir()
+
+    try:
+        loader_log(f"Preparing archive workspace: {appdir}")
+
+        # Use zipfile (more reliable)
+        import zipfile
+        loader_log(f"Opening {bundle}.apk")
+        async with platform.fopen(f"{bundle}.apk", "rb") as archive:
+            loader_log("Extracting APK archive...")
+            with zipfile.ZipFile(archive) as zip_ref:
+                zip_ref.extractall(appdir.as_posix())
+
+        loader_log("Archive extracted. Preparing runtime...")
+        platform.run_main(PyConfig, loaderhome=appdir / "assets", loadermain=None)
+
+        while embed.counter() < 0:
+            await asyncio.sleep(.1)
+
+        main = appdir / "assets" / "main.py"
+        loader_log(f"Resolved entrypoint: {main}")
+
+        if not platform.window.MM.UME:
+            __import__(__name__).__file__ = main
+            msg = "Ready to start. Click or tap the page to enable audio."
+            platform.window.infobox.innerText = msg
+            loader_log(msg)
+
+            while not platform.window.MM.UME:
+                await asyncio.sleep(.1)
+
+        loader_log("Starting async runtime...")
+        await TopLevel_async_handler.start_toplevel(platform.shell, console=window.python.config.debug)
+
+        __import__(__name__).__file__ = main
+
+        def ui_callback(pkg):
+            notice = f"installing {pkg}"
+            platform.window.infobox.innerText = notice
+            loader_log(notice)
+
+        loader_log("Launching main.py")
+        await shell.source(main, callback=ui_callback)
+
+        platform.window.infobox.style.display = "none"
+        platform.window.config.gui_divider = 1
+        platform.window.window_resize()
+        platform.window.transfer.hidden = true
+        loader_log("Main game script loaded.")
+        print("Custom nice template: done")
+        shell.interactive()
+
+    except Exception as exc:
+        loader_log(f"Bootstrap failed: {exc}")
+        raise
+
+asyncio.run(custom_site())
+#--></script>
+
+<head>
+    <title>{{cookiecutter.title}}</title>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <link rel="icon" type="image/png" href="favicon.png" sizes="16x16">
+
+    <style>
+        :root { color-scheme: dark; }
+        body {
+            margin: 0;
+            font-family: monospace;
+            background: radial-gradient(circle at top, rgba(103, 153, 255, 0.22), transparent 36%),
+                        linear-gradient(180deg, #111722 0%, #070a12 100%);
+            color: #e9eefc;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #transfer {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            width: min(460px, calc(100vw - 24px));
+            max-height: calc(100vh - 24px);
+            overflow: auto;
+            padding: 16px;
+            border: 1px solid rgba(255,255,255,0.14);
+            border-radius: 14px;
+            background: rgba(4, 7, 14, 0.88);
+            box-shadow: 0 18px 50px rgba(0,0,0,0.5);
+            backdrop-filter: blur(10px);
+            z-index: 99999;
+            color: #bfecc7;
+        }
+
+        #status { font-weight: bold; color: #fff2a8; margin-bottom: 10px; }
+        #progress { width: 100%; height: 10px; margin: 8px 0; }
+        #loader-log {
+            min-height: 160px;
+            white-space: pre-wrap;
+            font-size: 13.5px;
+            line-height: 1.45;
+            color: #bfecc7;
+        }
+
+        #infobox {
+            position: fixed;
+            background: rgba(10, 32, 16, 0.95);
+            color: #dff9e1;
+            font-weight: bold;
+            padding: 14px 26px;
+            border: 1px solid rgba(180, 255, 180, 0.3);
+            border-radius: 12px;
+            z-index: 999999;
+            display: none;
+        }
+
+        canvas.emscripten {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            margin: auto;
+            image-rendering: pixelated;
+            z-index: 5;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="transfer">
+        <div id="status">Downloading runtime...</div>
+        <progress value="0" max="100" id="progress"></progress>
+        <pre id="loader-log"></pre>
+    </div>
+
+    <canvas class="emscripten" id="canvas"
+            width="1px" height="1px"
+            oncontextmenu="event.preventDefault()" tabindex="1"></canvas>
+
+    <div id="infobox">Loading, please wait ...</div>
+
+    <script type="application/javascript">
+        window.config = {
+            xtermjs: "1",
+            _sdl2: "canvas",
+            user_canvas: 0,
+            user_canvas_managed: 0,
+            gui_divider: 1,
+            ume_block: {{cookiecutter.ume_block}},
+            can_close: {{cookiecutter.can_close}},
+            archive: "{{cookiecutter.archive}}",
+            gui_debug: 1,
+            cdn: "{{cookiecutter.cdn}}",
+            autorun: {{cookiecutter.autorun}},
+            PYBUILD: "{{cookiecutter.PYBUILD}}",
+            fb_width: "{{cookiecutter.width}}",
+            fb_height: "{{cookiecutter.height}}"
+        };
+
+        // Nice side logging
+        window.loader_log = function(msg) {
+            const node = document.getElementById("loader-log");
+            if (node) {
+                const time = new Date().toLocaleTimeString([], {hour12: false});
+                node.textContent += `[${time}] ${msg}\n`;
+                node.scrollTop = node.scrollHeight;
+            }
+        };
+
+        function show_infobox(text) {
+            const box = document.getElementById("infobox");
+            if (text) box.innerText = text;
+            box.style.display = "block";
+            const w = box.offsetWidth;
+            const h = box.offsetHeight;
+            box.style.left = (window.innerWidth - w)/2 + "px";
+            box.style.top  = (window.innerHeight - h)/2 + "px";
+        }
+
+        // Hide loader when game starts
+        function hideLoader() {
+            const t = document.getElementById("transfer");
+            if (t) t.style.opacity = "0";
+            setTimeout(() => { if (t) t.style.display = "none"; }, 600);
+        }
+    </script>
+
+</body>
+</html>
